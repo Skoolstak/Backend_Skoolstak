@@ -72,3 +72,85 @@ exports.listStudents = async (req, res) => {
   if (error) return res.status(500).json({ error: error.message });
   res.json({ students: data });
 };
+
+/**
+ * POST /api/classes/import-excel
+ * Bulk import classes from Excel file
+ * Expects base64 encoded Excel file in req.body.file
+ * Required columns: name
+ * Optional columns: level, capacity
+ */
+exports.importExcel = async (req, res) => {
+  try {
+    const XLSX = require('xlsx');
+    const { file } = req.body;
+
+    if (!file) {
+      return res.status(400).json({ error: 'No file provided.' });
+    }
+
+    // Decode base64
+    let buffer;
+    if (typeof file === 'string' && file.startsWith('data:')) {
+      const matches = file.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      if (!matches || matches.length !== 3) {
+        return res.status(400).json({ error: 'Invalid base64 format.' });
+      }
+      buffer = Buffer.from(matches[2], 'base64');
+    } else {
+      return res.status(400).json({ error: 'File must be base64 encoded.' });
+    }
+
+    // Parse Excel
+    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json(worksheet);
+
+    if (!data || data.length === 0) {
+      return res.status(400).json({ error: 'Excel file is empty.' });
+    }
+
+    const results = { success: 0, failed: 0, errors: [] };
+
+    // Process each row
+    for (const row of data) {
+      try {
+        if (!row.name) {
+          results.failed++;
+          results.errors.push({ row, error: 'Missing name' });
+          continue;
+        }
+
+        const classData = {
+          school_id: req.schoolId,
+          name: String(row.name).trim(),
+          level: row.level ? String(row.level).trim() : null,
+          capacity: row.capacity ? parseInt(row.capacity) : null,
+          teacher_id: null,
+        };
+
+        const { error } = await supabase
+          .from('classes')
+          .insert(classData);
+
+        if (error) {
+          results.failed++;
+          results.errors.push({ row, error: error.message });
+        } else {
+          results.success++;
+        }
+      } catch (err) {
+        results.failed++;
+        results.errors.push({ row, error: err.message });
+      }
+    }
+
+    res.json({
+      message: `Import completed. ${results.success} classes added, ${results.failed} failed.`,
+      ...results,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};

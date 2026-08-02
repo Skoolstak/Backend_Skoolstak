@@ -142,3 +142,126 @@ exports.remove = async (req, res) => {
 
   res.json({ success: true });
 };
+
+/**
+ * POST /api/staff/import-excel
+ * Bulk import staff members from Excel file
+ * Expects base64 encoded Excel file in req.body.file
+ * Required columns: first_name, last_name, email
+ * Optional columns: phone, role, department, designation
+ */
+exports.importExcel = async (req, res) => {
+  try {
+    const XLSX = require('xlsx');
+    const { file } = req.body;
+
+    if (!file) {
+      return res.status(400).json({ error: 'No file provided.' });
+    }
+
+    // Decode base64
+    let buffer;
+    if (typeof file === 'string' && file.startsWith('data:')) {
+      const matches = file.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      if (!matches || matches.length !== 3) {
+        return res.status(400).json({ error: 'Invalid base64 format.' });
+      }
+      buffer = Buffer.from(matches[2], 'base64');
+    } else {
+      return res.status(400).json({ error: 'File must be base64 encoded.' });
+    }
+
+    // Parse Excel
+    const workbook = XLSX.read(buffer, { type: 'buffer' });
+    const sheetName = workbook.SheetNames[0];
+    const worksheet = workbook.Sheets[sheetName];
+    const data = XLSX.utils.sheet_to_json(worksheet);
+
+    if (!data || data.length === 0) {
+      return res.status(400).json({ error: 'Excel file is empty.' });
+    }
+
+    const results = { success: 0, failed: 0, errors: [] };
+
+    // Process each row
+    for (const row of data) {
+      try {
+        if (!row.first_name || !row.last_name || !row.email) {
+          results.failed++;
+          results.errors.push({ row, error: 'Missing first_name, last_name, or email' });
+          continue;
+        }
+
+        const email = String(row.email).trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+          results.failed++;
+          results.errors.push({ row, error: 'Invalid email address' });
+          continue;
+        }
+
+        const role = row.role && ALLOWED_ROLES.includes(row.role) ? row.role : 'teacher';
+
+        // 1. Invite user
+        const { data: inviteData, error: inviteErr } = await supabase.auth.admin.inviteUserByEmail(email);
+        if (inviteErr) {
+          results.failed++;
+          results.errors.push({ row, error: inviteErr.message });
+          continue;
+        }
+
+        const authUserId = inviteData.user.id;
+
+        // 2. Create user_profile
+        const { data: profileRow, error: profileErr } = await supabase
+          .from('user_profiles')
+          .insert({
+            auth_user_id: authUserId,
+            school_id: req.schoolId,
+            role,
+            first_name: String(row.first_name).trim(),
+            last_name: String(row.last_name).trim(),
+            phone: row.phone ? String(row.phone).trim() : null,
+          })
+          .select()
+          .single();
+
+        if (profileErr) {
+          await supabase.auth.admin.deleteUser(authUserId);
+          results.failed++;
+          results.errors.push({ row, error: profileErr.message });
+          continue;
+        }
+
+        // 3. Create staff row
+        const { error: staffErr } = await supabase
+          .from('staff')
+          .insert({
+            school_id: req.schoolId,
+            user_profile_id: profileRow.id,
+            department: row.department ? String(row.department).trim() : null,
+            designation: row.designation ? String(row.designation).trim() : null,
+          });
+
+        if (staffErr) {
+          await supabase.auth.admin.deleteUser(authUserId);
+          await supabase.from('user_profiles').delete().eq('id', profileRow.id);
+          results.failed++;
+          results.errors.push({ row, error: staffErr.message });
+          continue;
+        }
+
+        results.success++;
+      } catch (err) {
+        results.failed++;
+        results.errors.push({ row, error: err.message });
+      }
+    }
+
+    res.json({
+      message: `Import completed. ${results.success} staff members added, ${results.failed} failed.`,
+      ...results,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};

@@ -8,6 +8,7 @@ router.use(authMiddleware);
 // Cache subject list 2 minutes — subjects don't change often
 router.get('/',     cacheMiddleware(120), ctrl.list);
 router.post('/',    requireRole('school_admin'), ctrl.create);
+router.post('/import-excel', requireRole('school_admin'), ctrl.importExcel);
 router.put('/:id',  requireRole('school_admin'), ctrl.update);
 router.delete('/:id', requireRole('school_admin'), ctrl.remove);
 
