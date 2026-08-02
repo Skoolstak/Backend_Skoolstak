@@ -43,13 +43,73 @@ exports.create = async (req, res) => {
   }
   if (!fields.class_id)  fields.class_id  = null;
   if (!fields.parent_id) fields.parent_id = null;
-  const { data, error } = await supabase
+  
+  // 1. Create student record first to get student_id
+  const { data: studentData, error } = await supabase
     .from('students')
     .insert({ ...fields, school_id: req.schoolId })
     .select()
     .single();
   if (error) return res.status(400).json({ error: error.message });
-  res.status(201).json({ student: data });
+  
+  // 2. Create auth account for student with student_id as initial password
+  const studentId = studentData.student_id; // e.g., STU-2026-001
+  const tempEmail = `${studentId.toLowerCase()}@student.local`; // e.g., stu-2026-001@student.local
+  const initialPassword = studentId; // Use student ID as initial password
+  
+  const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+    email: tempEmail,
+    password: initialPassword,
+    email_confirm: true, // auto-confirm
+  });
+  
+  if (authError) {
+    // If auth creation fails, keep the student record but log warning
+    console.warn(`Auth account creation failed for student ${studentId}:`, authError.message);
+    return res.status(201).json({ 
+      student: studentData,
+      warning: 'Student created but login account setup failed. Contact administrator.' 
+    });
+  }
+  
+  const authUserId = authData.user.id;
+  
+  // 3. Create user_profile for student
+  const { data: profileData, error: profileError } = await supabase
+    .from('user_profiles')
+    .insert({
+      auth_user_id: authUserId,
+      school_id: req.schoolId,
+      role: 'student',
+      first_name: fields.first_name,
+      last_name: fields.last_name,
+    })
+    .select()
+    .single();
+  
+  if (profileError) {
+    // Rollback auth user if profile creation fails
+    await supabase.auth.admin.deleteUser(authUserId);
+    return res.status(201).json({ 
+      student: studentData,
+      warning: 'Student created but login profile setup failed. Contact administrator.' 
+    });
+  }
+  
+  // 4. Link student to user_profile
+  const { error: updateError } = await supabase
+    .from('students')
+    .update({ user_profile_id: profileData.id })
+    .eq('id', studentData.id);
+  
+  if (updateError) {
+    console.warn(`Failed to link student to user_profile:`, updateError.message);
+  }
+  
+  res.status(201).json({ 
+    student: { ...studentData, user_profile_id: profileData.id },
+    message: `Student enrolled successfully. Login ID: ${studentId}, Initial Password: ${studentId}`
+  });
 };
 
 exports.update = async (req, res) => {
@@ -121,7 +181,7 @@ exports.importExcel = async (req, res) => {
 
     const results = { success: 0, failed: 0, errors: [] };
 
-    // Expected columns: first_name, last_name, dob (optional), gender (optional)
+    // Expected columns: first_name, last_name, dob (optional)
     for (const row of data) {
       try {
         if (!row.first_name || !row.last_name) {
@@ -139,16 +199,64 @@ exports.importExcel = async (req, res) => {
           status: 'active',
         };
 
-        const { error } = await supabase
+        // 1. Create student record
+        const { data: student, error } = await supabase
           .from('students')
-          .insert(studentData);
+          .insert(studentData)
+          .select()
+          .single();
 
         if (error) {
           results.failed++;
           results.errors.push({ row, error: error.message });
-        } else {
-          results.success++;
+          continue;
         }
+
+        // 2. Create auth account for student
+        const studentId = student.student_id;
+        const tempEmail = `${studentId.toLowerCase()}@student.local`;
+        const initialPassword = studentId;
+
+        const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+          email: tempEmail,
+          password: initialPassword,
+          email_confirm: true,
+        });
+
+        if (authError) {
+          // Student created but auth failed - log and continue
+          console.warn(`Auth creation failed for ${studentId}:`, authError.message);
+          results.success++;
+          continue;
+        }
+
+        // 3. Create user_profile
+        const { data: profileData, error: profileError } = await supabase
+          .from('user_profiles')
+          .insert({
+            auth_user_id: authData.user.id,
+            school_id: req.schoolId,
+            role: 'student',
+            first_name: studentData.first_name,
+            last_name: studentData.last_name,
+          })
+          .select()
+          .single();
+
+        if (profileError) {
+          await supabase.auth.admin.deleteUser(authData.user.id);
+          console.warn(`Profile creation failed for ${studentId}:`, profileError.message);
+          results.success++;
+          continue;
+        }
+
+        // 4. Link student to user_profile
+        await supabase
+          .from('students')
+          .update({ user_profile_id: profileData.id })
+          .eq('id', student.id);
+
+        results.success++;
       } catch (err) {
         results.failed++;
         results.errors.push({ row, error: err.message });

@@ -267,3 +267,71 @@ exports.resetPassword = async (req, res) => {
 
   res.json({ message: 'Password updated successfully. You can now sign in.' });
 };
+
+/**
+ * POST /api/auth/change-password
+ * Authenticated endpoint — allows users to change their password
+ * Body: { currentPassword, newPassword }
+ * Requires: Authorization header with Bearer token
+ */
+exports.changePassword = async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Current password and new password are required.' });
+  }
+
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: 'New password must be at least 8 characters.' });
+  }
+
+  if (newPassword.length > 128) {
+    return res.status(400).json({ error: 'New password is too long.' });
+  }
+
+  if (currentPassword === newPassword) {
+    return res.status(400).json({ error: 'New password must be different from current password.' });
+  }
+
+  try {
+    // Get the authorization header
+    const authHeader = req.headers.authorization;
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return res.status(401).json({ error: 'No authorization token provided.' });
+    }
+
+    const token = authHeader.substring(7);
+
+    // Get user from token
+    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+    
+    if (userError || !user) {
+      return res.status(401).json({ error: 'Invalid or expired token.' });
+    }
+
+    // Verify current password by attempting to sign in
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email: user.email,
+      password: currentPassword,
+    });
+
+    if (signInError) {
+      return res.status(401).json({ error: 'Current password is incorrect.' });
+    }
+
+    // Update password
+    const { error: updateError } = await supabase.auth.admin.updateUserById(
+      user.id,
+      { password: newPassword }
+    );
+
+    if (updateError) {
+      return res.status(500).json({ error: 'Failed to update password.' });
+    }
+
+    res.json({ message: 'Password changed successfully.' });
+  } catch (error) {
+    console.error('Change password error:', error);
+    res.status(500).json({ error: 'An error occurred while changing password.' });
+  }
+};

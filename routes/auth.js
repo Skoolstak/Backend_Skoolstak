@@ -1,7 +1,7 @@
 'use strict';
 const express = require('express');
 const router  = express.Router();
-const { register, loginWithId, forgotPassword, resetPassword } = require('../controllers/auth');
+const { register, loginWithId, forgotPassword, resetPassword, changePassword } = require('../controllers/auth');
 
 // POST /api/auth/register — public, no auth middleware
 router.post('/register', register);
@@ -14,5 +14,8 @@ router.post('/forgot-password', forgotPassword);
 
 // POST /api/auth/reset-password — complete password reset
 router.post('/reset-password', resetPassword);
+
+// POST /api/auth/change-password — change password while authenticated
+router.post('/change-password', changePassword);
 
 module.exports = router;
