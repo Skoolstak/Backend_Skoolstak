@@ -17,8 +17,105 @@ exports.myClasses = async (req, res) => {
     name:          c.name,
     room:          c.room,
     student_count: c.students?.[0]?.count || 0,
-    subject:       c.timetable_slots?.[0]?.subject || '—',
+    subject_count: new Set((c.timetable_slots || []).map(t => t.subject)).size,
   }));
 
   res.json({ classes });
 };
+
+exports.classStats = async (req, res) => {
+  const { id } = req.params;
+  const teacherProfileId = req.profile?.id;
+
+  try {
+    // Verify teacher has access to this class
+    const { data: classData, error: classError } = await supabase
+      .from('classes')
+      .select('id, name')
+      .eq('school_id', req.schoolId)
+      .eq('id', id)
+      .eq('teacher_id', teacherProfileId)
+      .single();
+
+    if (classError || !classData) {
+      return res.status(403).json({ error: 'Access denied or class not found' });
+    }
+
+    const currentYear = new Date().getFullYear();
+    const currentTerm = Math.ceil((new Date().getMonth() + 1) / 4);
+
+    // Get total students
+    const { count: total_students } = await supabase
+      .from('students')
+      .select('*', { count: 'exact', head: true })
+      .eq('school_id', req.schoolId)
+      .eq('class_id', id);
+
+    // Get total subjects for this class
+    const { data: subjects } = await supabase
+      .from('timetable_slots')
+      .select('subject')
+      .eq('school_id', req.schoolId)
+      .eq('class_id', id);
+
+    const total_subjects = new Set((subjects || []).map(s => s.subject)).size;
+
+    // Get attendance stats
+    const { data: attendanceRecords } = await supabase
+      .from('attendance')
+      .select('status, student_id')
+      .eq('school_id', req.schoolId)
+      .eq('class_id', id)
+      .eq('academic_year', currentYear)
+      .eq('term', currentTerm);
+
+    let avg_attendance = null;
+    if (attendanceRecords && attendanceRecords.length > 0) {
+      const studentAttendance = {};
+      attendanceRecords.forEach(record => {
+        if (!studentAttendance[record.student_id]) {
+          studentAttendance[record.student_id] = { present: 0, total: 0 };
+        }
+        studentAttendance[record.student_id].total++;
+        if (record.status === 'Present') {
+          studentAttendance[record.student_id].present++;
+        }
+      });
+
+      const rates = Object.values(studentAttendance).map(s => (s.present / s.total) * 100);
+      avg_attendance = rates.length > 0 
+        ? Math.round(rates.reduce((sum, r) => sum + r, 0) / rates.length)
+        : 0;
+    }
+
+    // Get average score
+    const { data: grades } = await supabase
+      .from('grade_records')
+      .select('total_score')
+      .eq('school_id', req.schoolId)
+      .eq('class_id', id)
+      .eq('academic_year', currentYear)
+      .eq('term', currentTerm);
+
+    let avg_score = null;
+    if (grades && grades.length > 0) {
+      const validScores = grades.filter(g => g.total_score !== null);
+      if (validScores.length > 0) {
+        avg_score = Math.round(
+          validScores.reduce((sum, g) => sum + Number(g.total_score), 0) / validScores.length
+        );
+      }
+    }
+
+    res.json({
+      total_students: total_students || 0,
+      total_subjects,
+      avg_attendance,
+      avg_score,
+    });
+  } catch (error) {
+    console.error('Class stats error:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+

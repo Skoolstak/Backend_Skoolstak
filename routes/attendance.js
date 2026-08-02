@@ -7,5 +7,6 @@ router.use(authMiddleware);
 
 router.get('/',    requireRole('school_admin','teacher','student','parent'), ctrl.list);
 router.post('/',   requireRole('school_admin','teacher'), ctrl.save);
+router.post('/bulk', requireRole('school_admin','teacher'), ctrl.save);
 
 module.exports = router;
