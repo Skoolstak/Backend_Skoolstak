@@ -7,6 +7,7 @@ router.use(authMiddleware);
 
 router.get('/',      requireRole('school_admin','super_admin','teacher','parent'), ctrl.list);
 router.post('/',     requireRole('school_admin'), ctrl.create);
+router.post('/import-excel', requireRole('school_admin'), ctrl.importExcel);
 router.put('/:id',   requireRole('school_admin'), ctrl.update);
 router.delete('/:id',requireRole('school_admin'), ctrl.remove);
 

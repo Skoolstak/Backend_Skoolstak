@@ -240,3 +240,197 @@ exports.paystackWebhook = async (req, res) => {
   }
   res.sendStatus(200);
 };
+
+/**
+ * GET /api/finance/invoice/:id/pdf
+ * Generate PDF invoice
+ * Install: npm install pdfkit
+ */
+exports.generateInvoicePDF = async (req, res) => {
+  try {
+    const PDFDocument = require('pdfkit');
+    const { id } = req.params;
+
+    if (!isValidUUID(id)) {
+      return res.status(400).json({ error: 'Invalid invoice ID.' });
+    }
+
+    // Fetch invoice with related data
+    const { data: invoice, error } = await supabase
+      .from('fee_invoices')
+      .select(`
+        *,
+        fee_types(name),
+        students(first_name, last_name, student_id),
+        schools!inner(name, slug)
+      `)
+      .eq('id', id)
+      .eq('school_id', req.schoolId)
+      .single();
+
+    if (error || !invoice) {
+      return res.status(404).json({ error: 'Invoice not found.' });
+    }
+
+    // Create PDF
+    const doc = new PDFDocument({ margin: 50 });
+    
+    // Set response headers
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="invoice-${invoice.id}.pdf"`);
+    
+    // Pipe to response
+    doc.pipe(res);
+
+    // Header
+    doc.fontSize(20).text(invoice.schools.name, { align: 'center' });
+    doc.fontSize(10).text('FEE INVOICE', { align: 'center' });
+    doc.moveDown();
+
+    // Invoice details
+    doc.fontSize(12).text(`Invoice ID: ${invoice.id}`, 50, 150);
+    doc.text(`Date: ${new Date(invoice.created_at).toLocaleDateString()}`);
+    doc.text(`Term: ${invoice.term}`);
+    doc.text(`Academic Year: ${invoice.academic_year || 'N/A'}`);
+    doc.text(`Due Date: ${invoice.due_date ? new Date(invoice.due_date).toLocaleDateString() : 'N/A'}`);
+    doc.moveDown();
+
+    // Student details
+    doc.fontSize(12).text('Billed To:');
+    doc.fontSize(10).text(`Student: ${invoice.students.first_name} ${invoice.students.last_name}`);
+    doc.text(`Student ID: ${invoice.students.student_id}`);
+    doc.moveDown(2);
+
+    // Table header
+    doc.fontSize(12).text('Description', 50, 280);
+    doc.text('Amount (₵)', 400, 280);
+    doc.moveTo(50, 295).lineTo(550, 295).stroke();
+
+    // Fee details
+    doc.fontSize(10).text(invoice.fee_types.name, 50, 305);
+    doc.text(Number(invoice.amount).toFixed(2), 400, 305);
+    doc.moveDown(2);
+
+    // Totals
+    const amountPaid = Number(invoice.amount_paid || 0);
+    const balance = Number(invoice.amount) - amountPaid;
+
+    doc.moveTo(50, 340).lineTo(550, 340).stroke();
+    doc.fontSize(12).text('Total Amount:', 350, 350);
+    doc.text(`₵${Number(invoice.amount).toFixed(2)}`, 450, 350);
+    doc.text('Amount Paid:', 350, 370);
+    doc.text(`₵${amountPaid.toFixed(2)}`, 450, 370);
+    doc.text('Balance Due:', 350, 390);
+    doc.fontSize(14).text(`₵${balance.toFixed(2)}`, 450, 390);
+
+    // Status
+    doc.fontSize(10);
+    const statusY = 420;
+    doc.text(`Status: ${invoice.status.toUpperCase()}`, 50, statusY);
+
+    // Footer
+    doc.fontSize(8).text('Thank you for your payment.', 50, 700, { align: 'center' });
+
+    doc.end();
+  } catch (err) {
+    if (err.code === 'MODULE_NOT_FOUND') {
+      return res.status(500).json({ 
+        error: 'PDF library not installed. Run: npm install pdfkit' 
+      });
+    }
+    console.error('PDF generation error:', err);
+    res.status(500).json({ error: 'Failed to generate PDF.' });
+  }
+};
+
+/**
+ * GET /api/finance/receipt/:paymentId/pdf
+ * Generate PDF receipt
+ * Install: npm install pdfkit
+ */
+exports.generateReceiptPDF = async (req, res) => {
+  try {
+    const PDFDocument = require('pdfkit');
+    const { paymentId } = req.params;
+
+    if (!isValidUUID(paymentId)) {
+      return res.status(400).json({ error: 'Invalid payment ID.' });
+    }
+
+    // Fetch payment with related data
+    const { data: payment, error } = await supabase
+      .from('fee_payments')
+      .select(`
+        *,
+        fee_invoices(
+          term,
+          academic_year,
+          fee_types(name),
+          students(first_name, last_name, student_id)
+        ),
+        schools!inner(name, slug)
+      `)
+      .eq('id', paymentId)
+      .eq('school_id', req.schoolId)
+      .single();
+
+    if (error || !payment) {
+      return res.status(404).json({ error: 'Payment not found.' });
+    }
+
+    // Create PDF
+    const doc = new PDFDocument({ margin: 50 });
+    
+    // Set response headers
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="receipt-${payment.receipt_number}.pdf"`);
+    
+    // Pipe to response
+    doc.pipe(res);
+
+    // Header
+    doc.fontSize(20).text(payment.schools.name, { align: 'center' });
+    doc.fontSize(10).text('PAYMENT RECEIPT', { align: 'center' });
+    doc.moveDown();
+
+    // Receipt details
+    doc.fontSize(12).text(`Receipt No: ${payment.receipt_number}`, 50, 150);
+    doc.text(`Date: ${new Date(payment.paid_at).toLocaleDateString()}`);
+    doc.text(`Payment Method: ${payment.method.replace('_', ' ').toUpperCase()}`);
+    doc.text(`Reference: ${payment.reference || 'N/A'}`);
+    doc.moveDown();
+
+    // Student details
+    const student = payment.fee_invoices.students;
+    doc.fontSize(12).text('Received From:');
+    doc.fontSize(10).text(`Student: ${student.first_name} ${student.last_name}`);
+    doc.text(`Student ID: ${student.student_id}`);
+    doc.moveDown(2);
+
+    // Payment details
+    doc.fontSize(12).text('Payment Details:');
+    doc.fontSize(10).text(`Fee Type: ${payment.fee_invoices.fee_types.name}`);
+    doc.text(`Term: ${payment.fee_invoices.term}`);
+    doc.text(`Academic Year: ${payment.fee_invoices.academic_year || 'N/A'}`);
+    doc.moveDown(2);
+
+    // Amount box
+    doc.rect(50, 340, 500, 60).stroke();
+    doc.fontSize(14).text('Amount Paid:', 60, 360);
+    doc.fontSize(20).text(`₵${Number(payment.amount).toFixed(2)}`, 350, 355);
+
+    // Footer
+    doc.fontSize(8).text('This is an official receipt. Please keep for your records.', 50, 700, { align: 'center' });
+    doc.text(`Generated on ${new Date().toLocaleDateString()}`, { align: 'center' });
+
+    doc.end();
+  } catch (err) {
+    if (err.code === 'MODULE_NOT_FOUND') {
+      return res.status(500).json({ 
+        error: 'PDF library not installed. Run: npm install pdfkit' 
+      });
+    }
+    console.error('PDF generation error:', err);
+    res.status(500).json({ error: 'Failed to generate PDF.' });
+  }
+};

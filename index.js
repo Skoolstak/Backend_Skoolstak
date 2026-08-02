@@ -25,6 +25,7 @@ const subjectsRouter  = require('./routes/subjects');
 const gradesRouter    = require('./routes/grades');
 const reportsRouter   = require('./routes/reports');
 const alumniRouter    = require('./routes/alumni');
+const uploadRouter    = require('./routes/upload');
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
@@ -102,8 +103,11 @@ app.use('/api/attendance',  bulkLimiter);
 // Paystack webhook needs raw body for signature verification
 app.use('/api/finance/webhook', express.raw({ type: 'application/json' }));
 
-// 50kb body limit — needed for bulk grade uploads (100 students × many fields)
-// Still safe against DoS; was 10kb which broke bulk operations
+// 5MB body limit for photo uploads (base64 encoded images)
+// Photo uploads go through /api/upload with larger limit
+app.use('/api/upload', express.json({ limit: '5mb' }));
+
+// 50kb body limit for regular API requests
 app.use(express.json({ limit: '50kb' }));
 
 // Global XSS sanitization — strips HTML/script tags from ALL string inputs
@@ -137,6 +141,7 @@ app.use('/api/subjects',   subjectsRouter);
 app.use('/api/grades',     gradesRouter);
 app.use('/api/reports',    reportsRouter);
 app.use('/api/alumni',     alumniRouter);
+app.use('/api/upload',     uploadRouter);
 
 // ── 404 handler ───────────────────────────────────────────────────────────────
 app.use((_req, res) => res.status(404).json({ error: 'Route not found.' }));
@@ -153,5 +158,6 @@ app.use((err, req, res, _next) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`\u{1F7E2} Skoolstak API running on http://localhost:${PORT} [${isDev ? 'development' : 'production'}]`);
+  const publicUrl = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+  console.log(`\u{1F7E2} Skoolstak API running on ${publicUrl} [${isDev ? 'development' : 'production'}]`);
 });

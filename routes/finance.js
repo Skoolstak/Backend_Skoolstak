@@ -16,10 +16,12 @@ router.put('/fee-types/:id',     admin,  ctrl.updateFeeType);
 router.get('/invoices',          viewer, ctrl.listInvoices);
 router.post('/invoices',         admin,  ctrl.createInvoice);
 router.post('/invoices/:id/pay', viewer, ctrl.payInvoice);
+router.get('/invoice/:id/pdf',   viewer, ctrl.generateInvoicePDF);
 
 // Payments
 router.get('/payments',          admin,  ctrl.listPayments);
 router.post('/payments',         admin,  ctrl.recordPayment);
+router.get('/receipt/:paymentId/pdf', viewer, ctrl.generateReceiptPDF);
 
 // Cash Flow
 router.get('/cash-flow',         admin,  ctrl.listCashFlow);

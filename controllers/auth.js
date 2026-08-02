@@ -1,6 +1,7 @@
 'use strict';
 const supabase = require('../supabaseClient'); // service-role client
 const { isValidEmail, isSafeText, cleanString } = require('../middleware/sanitize');
+const crypto = require('crypto');
 
 /**
  * POST /api/auth/register
@@ -95,4 +96,174 @@ exports.register = async (req, res) => {
   }
 
   res.status(201).json({ message: 'School registered successfully. You can now sign in.' });
+};
+
+/**
+ * POST /api/auth/login-with-id
+ * Public endpoint — login for students/teachers using their ID + password
+ * Body: { id, password } where id is student_id or staff_id
+ */
+exports.loginWithId = async (req, res) => {
+  const { id, password } = req.body;
+
+  if (!id || !password) {
+    return res.status(400).json({ error: 'ID and password are required.' });
+  }
+
+  // Check if it's a student ID
+  if (id.startsWith('STU-')) {
+    const { data: student, error } = await supabase
+      .from('students')
+      .select('*, user_profile_id')
+      .eq('student_id', id)
+      .maybeSingle();
+
+    if (error || !student) {
+      return res.status(401).json({ error: 'Invalid ID or password.' });
+    }
+
+    if (!student.user_profile_id) {
+      return res.status(401).json({ error: 'Student account not activated. Contact your administrator.' });
+    }
+
+    // Get user profile to find auth_user_id
+    const { data: profile, error: profileError } = await supabase
+      .from('user_profiles')
+      .select('auth_user_id')
+      .eq('id', student.user_profile_id)
+      .single();
+
+    if (profileError || !profile) {
+      return res.status(401).json({ error: 'Invalid ID or password.' });
+    }
+
+    // Get auth user email
+    const { data: authUser, error: authError } = await supabase.auth.admin.getUserById(profile.auth_user_id);
+
+    if (authError || !authUser.user) {
+      return res.status(401).json({ error: 'Invalid ID or password.' });
+    }
+
+    // Sign in with email and password
+    const { data: session, error: signInError } = await supabase.auth.signInWithPassword({
+      email: authUser.user.email,
+      password,
+    });
+
+    if (signInError) {
+      return res.status(401).json({ error: 'Invalid ID or password.' });
+    }
+
+    return res.json({ 
+      message: 'Login successful',
+      session: session.session,
+      user: session.user,
+      role: 'student',
+      id: student.student_id
+    });
+  }
+
+  // Check if it's a teacher/staff ID
+  if (id.startsWith('TEA-')) {
+    const { data: staff, error } = await supabase
+      .from('staff')
+      .select('*, user_profile_id')
+      .eq('staff_id', id)
+      .maybeSingle();
+
+    if (error || !staff) {
+      return res.status(401).json({ error: 'Invalid ID or password.' });
+    }
+
+    // Get user profile to find auth_user_id
+    const { data: profile, error: profileError } = await supabase
+      .from('user_profiles')
+      .select('auth_user_id, role')
+      .eq('id', staff.user_profile_id)
+      .single();
+
+    if (profileError || !profile) {
+      return res.status(401).json({ error: 'Invalid ID or password.' });
+    }
+
+    // Get auth user email
+    const { data: authUser, error: authError } = await supabase.auth.admin.getUserById(profile.auth_user_id);
+
+    if (authError || !authUser.user) {
+      return res.status(401).json({ error: 'Invalid ID or password.' });
+    }
+
+    // Sign in with email and password
+    const { data: session, error: signInError } = await supabase.auth.signInWithPassword({
+      email: authUser.user.email,
+      password,
+    });
+
+    if (signInError) {
+      return res.status(401).json({ error: 'Invalid ID or password.' });
+    }
+
+    return res.json({ 
+      message: 'Login successful',
+      session: session.session,
+      user: session.user,
+      role: profile.role,
+      id: staff.staff_id
+    });
+  }
+
+  return res.status(400).json({ error: 'Invalid ID format. Must start with STU- or TEA-' });
+};
+
+/**
+ * POST /api/auth/forgot-password
+ * Public endpoint — initiates password reset flow
+ * Body: { email }
+ */
+exports.forgotPassword = async (req, res) => {
+  const { email } = req.body;
+
+  if (!email || !isValidEmail(email)) {
+    return res.status(400).json({ error: 'Valid email address is required.' });
+  }
+
+  // Use Supabase's built-in password reset
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: `${process.env.CLIENT_URL}/reset-password`,
+  });
+
+  // Always return success to prevent email enumeration
+  res.json({ message: 'If that email exists, a password reset link has been sent.' });
+};
+
+/**
+ * POST /api/auth/reset-password
+ * Public endpoint — completes password reset with token
+ * Body: { token, password }
+ */
+exports.resetPassword = async (req, res) => {
+  const { token, password } = req.body;
+
+  if (!token || !password) {
+    return res.status(400).json({ error: 'Token and new password are required.' });
+  }
+
+  if (password.length < 8) {
+    return res.status(400).json({ error: 'Password must be at least 8 characters.' });
+  }
+
+  if (password.length > 128) {
+    return res.status(400).json({ error: 'Password is too long.' });
+  }
+
+  // Update password using the access token from the reset email
+  const { data, error } = await supabase.auth.updateUser({
+    password,
+  });
+
+  if (error) {
+    return res.status(400).json({ error: 'Invalid or expired reset token.' });
+  }
+
+  res.json({ message: 'Password updated successfully. You can now sign in.' });
 };
