@@ -32,6 +32,9 @@ function cleanString(val, maxLen = MAX_FIELD_LENGTH) {
   if (val === null || val === undefined) return val;
   if (typeof val !== 'string') return val; // numbers/booleans pass through untouched
   const trimmed = val.trim();
+  // Empty optional form fields must become NULL — Postgres rejects ""
+  // for uuid/integer/date columns with "invalid input syntax".
+  if (trimmed === '') return null;
   const stripped = xss(trimmed, XSS_OPTIONS);
   return stripped.slice(0, maxLen);
 }
