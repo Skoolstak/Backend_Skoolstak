@@ -112,63 +112,76 @@ exports.create = async (req, res) => {
     .select()
     .single();
   if (error) return res.status(400).json({ error: error.message });
-  
-  // 2. Create auth account for student with student_id as initial password
+
+  // 2. Provision the student's login account (reuses an existing one if present)
   const studentId = studentData.student_id; // e.g., STU-2026-001
-  const tempEmail = `${studentId.toLowerCase()}@student.local`; // e.g., stu-2026-001@student.local
-  const initialPassword = studentId; // Use student ID as initial password
-  
-  const { data: authData, error: authError } = await supabase.auth.admin.createUser({
-    email: tempEmail,
-    password: initialPassword,
-    email_confirm: true, // auto-confirm
-  });
-  
-  if (authError) {
-    // If auth creation fails, keep the student record but log warning
-    console.warn(`Auth account creation failed for student ${studentId}:`, authError.message);
-    return res.status(201).json({ 
-      student: studentData,
-      warning: 'Student created but login account setup failed. Contact administrator.' 
+  const tempEmail = `${studentId.toLowerCase()}@student.local`;
+
+  let authUserId;
+  const { data: authList } = await supabase.auth.admin.listUsers({ perPage: 1000 });
+  const existingAuth = (authList?.users || []).find(u => u.email === tempEmail);
+
+  if (existingAuth) {
+    authUserId = existingAuth.id;
+  } else {
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      email: tempEmail,
+      password: studentId, // initial password = student ID
+      email_confirm: true,
     });
+    if (authError) {
+      return res.status(201).json({
+        student: studentData,
+        warning: 'Student created but login account setup failed. Contact administrator.',
+      });
+    }
+    authUserId = authData.user.id;
   }
-  
-  const authUserId = authData.user.id;
-  
-  // 3. Create user_profile for student
-  const { data: profileData, error: profileError } = await supabase
+
+  // 3. Reuse or create the user_profile for this auth account
+  let profileId;
+  const { data: existingProfile } = await supabase
     .from('user_profiles')
-    .insert({
-      auth_user_id: authUserId,
-      school_id: req.schoolId,
-      role: 'student',
-      first_name: fields.first_name,
-      last_name: fields.last_name,
-    })
-    .select()
-    .single();
-  
-  if (profileError) {
-    // Rollback auth user if profile creation fails
-    await supabase.auth.admin.deleteUser(authUserId);
-    return res.status(201).json({ 
-      student: studentData,
-      warning: 'Student created but login profile setup failed. Contact administrator.' 
-    });
+    .select('id')
+    .eq('auth_user_id', authUserId)
+    .maybeSingle();
+
+  if (existingProfile) {
+    profileId = existingProfile.id;
+  } else {
+    const { data: profileData, error: profileError } = await supabase
+      .from('user_profiles')
+      .insert({
+        auth_user_id: authUserId,
+        school_id: req.schoolId,
+        role: 'student',
+        first_name: fields.first_name,
+        last_name: fields.last_name,
+      })
+      .select()
+      .single();
+
+    if (profileError) {
+      return res.status(201).json({
+        student: studentData,
+        warning: 'Student created but login profile setup failed. Contact administrator.',
+      });
+    }
+    profileId = profileData.id;
   }
-  
+
   // 4. Link student to user_profile
   const { error: updateError } = await supabase
     .from('students')
-    .update({ user_profile_id: profileData.id })
+    .update({ user_profile_id: profileId })
     .eq('id', studentData.id);
-  
+
   if (updateError) {
-    console.warn(`Failed to link student to user_profile:`, updateError.message);
+    console.warn('Failed to link student to user_profile:', updateError.message);
   }
-  
-  res.status(201).json({ 
-    student: { ...studentData, user_profile_id: profileData.id },
+
+  res.status(201).json({
+    student: { ...studentData, user_profile_id: profileId },
     message: `Student enrolled successfully. Login ID: ${studentId}, Initial Password: ${studentId}`,
     parent: parentInfo ? { email: parentInfo.email, initial_password: parentInfo.initialPassword } : null,
   });
