@@ -27,6 +27,10 @@ router.get('/receipt/:paymentId/pdf', viewer, ctrl.generateReceiptPDF);
 router.get('/cash-flow',         admin,  ctrl.listCashFlow);
 router.post('/cash-flow',        admin,  ctrl.createCashFlow);
 router.delete('/cash-flow/:id',  admin,  ctrl.deleteCashFlow);
+// Aliases without hyphen — older client builds call /cashflow
+router.get('/cashflow',          admin,  ctrl.listCashFlow);
+router.post('/cashflow',         admin,  ctrl.createCashFlow);
+router.delete('/cashflow/:id',   admin,  ctrl.deleteCashFlow);
 
 // Paystack initiation
 router.post('/initiate-payment', viewer, ctrl.initiatePaystackPayment);

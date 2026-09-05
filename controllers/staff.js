@@ -1,20 +1,29 @@
 'use strict';
 const supabase = require('../supabaseClient'); // service-role client
 const { isValidUUID } = require('../middleware/sanitize');
+const { resolvePhotoUrls } = require('../utils/photoUrls');
+const crypto = require('crypto');
 
 const ALLOWED_ROLES = ['teacher', 'school_admin'];
+
+function resolveAuthEmail(email, role) {
+  const normalizedEmail = email?.trim().toLowerCase();
+  if (normalizedEmail) return normalizedEmail;
+  return role === 'teacher' ? `teacher-${crypto.randomUUID()}@teacher.local` : null;
+}
 
 exports.list = async (req, res) => {
   const { data, error } = await supabase
     .from('staff')
-    .select('id, department, designation, user_profiles!user_profile_id(id, first_name, last_name, role, phone)')
+    .select('id, staff_id, photo_url, department, designation, user_profiles!user_profile_id(id, first_name, last_name, role, phone)')
     .eq('school_id', req.schoolId);
 
   if (error) return res.status(500).json({ error: error.message });
 
-  const staff = (data || [])
-    .map(s => ({
+  const staff = (await resolvePhotoUrls(supabase, 'staff-photos', data || [])).map(s => ({
       id:              s.id,
+      staff_id:        s.staff_id || '',
+      photo_url:       s.photo_url,
       user_profile_id: s.user_profiles?.id,
       first_name:      s.user_profiles?.first_name  || '',
       last_name:       s.user_profiles?.last_name   || '',
@@ -30,27 +39,33 @@ exports.list = async (req, res) => {
 
 exports.create = async (req, res) => {
   const { first_name, last_name, email, phone, role = 'teacher', department, designation } = req.body;
+  const authEmail = resolveAuthEmail(email, role);
 
-  if (!first_name || !last_name || !email) {
-    return res.status(400).json({ error: 'first_name, last_name, and email are required.' });
+  if (!first_name || !last_name || !authEmail) {
+    return res.status(400).json({ error: 'first_name and last_name are required. Email is required for school administrators.' });
   }
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+  // Basic email validation - allow most formats
+  if (!/^[^\s@]+@[^\s@]+$/.test(authEmail)) {
     return res.status(400).json({ error: 'Invalid email address.' });
   }
   if (!ALLOWED_ROLES.includes(role)) {
     return res.status(400).json({ error: `role must be one of: ${ALLOWED_ROLES.join(', ')}.` });
   }
 
-  // 1. Invite user — they receive an email to set their password
-  const { data: inviteData, error: inviteErr } = await supabase.auth.admin.inviteUserByEmail(email);
-  if (inviteErr) {
-    const msg = inviteErr.message?.toLowerCase().includes('already registered')
+  // 1. Create the teacher profile after obtaining a staff ID for the initial password.
+  const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+    email: authEmail,
+    password: crypto.randomUUID(),
+    email_confirm: true,
+  });
+  if (authError) {
+    const msg = authError.message?.toLowerCase().includes('already registered')
       ? 'A user with that email already exists.'
-      : inviteErr.message;
+      : authError.message;
     return res.status(400).json({ error: msg });
   }
 
-  const authUserId = inviteData.user.id;
+  const authUserId = authData.user.id;
 
   // 2. Create user_profile
   const { data: profileRow, error: profileErr } = await supabase
@@ -77,9 +92,18 @@ exports.create = async (req, res) => {
     return res.status(400).json({ error: staffErr.message });
   }
 
+  const { error: passwordError } = await supabase.auth.admin.updateUserById(authUserId, {
+    password: staffRow.staff_id,
+  });
+  if (passwordError) {
+    await supabase.from('staff').delete().eq('id', staffRow.id);
+    await supabase.auth.admin.deleteUser(authUserId);
+    return res.status(500).json({ error: 'Unable to set the teacher login password.' });
+  }
+
   res.status(201).json({
-    staff: { id: staffRow.id, user_profile_id: profileRow.id, first_name, last_name, role, phone, department: staffRow.department, designation: staffRow.designation },
-    message: `Invitation sent to ${email}.`,
+    staff: { id: staffRow.id, staff_id: staffRow.staff_id, user_profile_id: profileRow.id, first_name, last_name, role, phone, department: staffRow.department, designation: staffRow.designation },
+    message: `Teacher created. Login ID and initial password: ${staffRow.staff_id}`,
   });
 };
 
@@ -122,6 +146,30 @@ exports.update = async (req, res) => {
     department:  data.department,
     designation: data.designation,
   }});
+};
+
+exports.resetLogin = async (req, res) => {
+  if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
+
+  const { data: staffRow, error: staffError } = await supabase
+    .from('staff')
+    .select('staff_id, user_profiles!user_profile_id(auth_user_id, role)')
+    .eq('id', req.params.id)
+    .eq('school_id', req.schoolId)
+    .single();
+
+  if (staffError || !staffRow) return res.status(404).json({ error: 'Staff member not found.' });
+  if (staffRow.user_profiles?.role !== 'teacher' || !staffRow.staff_id) {
+    return res.status(400).json({ error: 'Only teachers with a staff ID can use this login reset.' });
+  }
+
+  const { error } = await supabase.auth.admin.updateUserById(staffRow.user_profiles.auth_user_id, {
+    password: staffRow.staff_id,
+    email_confirm: true,
+  });
+  if (error) return res.status(500).json({ error: 'Unable to reset the teacher login password.' });
+
+  res.json({ message: `Login reset. Initial password: ${staffRow.staff_id}` });
 };
 
 exports.remove = async (req, res) => {
@@ -201,15 +249,19 @@ exports.importExcel = async (req, res) => {
 
         const role = row.role && ALLOWED_ROLES.includes(row.role) ? row.role : 'teacher';
 
-        // 1. Invite user
-        const { data: inviteData, error: inviteErr } = await supabase.auth.admin.inviteUserByEmail(email);
-        if (inviteErr) {
+        // 1. Create the account with a temporary password until the generated staff ID is available.
+        const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+          email,
+          password: crypto.randomUUID(),
+          email_confirm: true,
+        });
+        if (authError) {
           results.failed++;
-          results.errors.push({ row, error: inviteErr.message });
+          results.errors.push({ row, error: authError.message });
           continue;
         }
 
-        const authUserId = inviteData.user.id;
+        const authUserId = authData.user.id;
 
         // 2. Create user_profile
         const { data: profileRow, error: profileErr } = await supabase
@@ -233,7 +285,7 @@ exports.importExcel = async (req, res) => {
         }
 
         // 3. Create staff row
-        const { error: staffErr } = await supabase
+        const { data: staffRow, error: staffErr } = await supabase
           .from('staff')
           .insert({
             school_id: req.schoolId,
@@ -247,6 +299,17 @@ exports.importExcel = async (req, res) => {
           await supabase.from('user_profiles').delete().eq('id', profileRow.id);
           results.failed++;
           results.errors.push({ row, error: staffErr.message });
+          continue;
+        }
+
+        const { error: passwordError } = await supabase.auth.admin.updateUserById(authUserId, {
+          password: staffRow.staff_id,
+        });
+        if (passwordError) {
+          await supabase.from('staff').delete().eq('id', staffRow.id);
+          await supabase.auth.admin.deleteUser(authUserId);
+          results.failed++;
+          results.errors.push({ row, error: 'Unable to set the teacher login password.' });
           continue;
         }
 

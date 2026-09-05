@@ -8,9 +8,12 @@ async function testEndpoints() {
   
   const tests = [
     { name: 'Health Check', method: 'GET', url: 'http://localhost:5000/health' },
-    { name: 'Auth Routes Exist', method: 'POST', url: `${BASE_URL}/auth/login` },
+    { name: 'School Registration Route', method: 'POST', url: `${BASE_URL}/auth/register` },
     { name: 'Login with ID Route', method: 'POST', url: `${BASE_URL}/auth/login-with-id` },
     { name: 'Forgot Password Route', method: 'POST', url: `${BASE_URL}/auth/forgot-password` },
+    { name: 'Subjects Route', method: 'GET', url: `${BASE_URL}/subjects` },
+    { name: 'Student Photo Upload Route', method: 'POST', url: `${BASE_URL}/upload/student-photo/00000000-0000-0000-0000-000000000000` },
+    { name: 'Receipt Upload Route', method: 'POST', url: `${BASE_URL}/upload/receipt/00000000-0000-0000-0000-000000000000` },
     { name: 'Students Import Route', method: 'POST', url: `${BASE_URL}/students/import-excel` },
   ];
 

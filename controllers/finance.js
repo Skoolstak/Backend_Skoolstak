@@ -154,10 +154,10 @@ exports.payInvoice = async (req, res) => {
 /* ─ Cash Flow ─ */
 exports.listCashFlow = async (req, res) => {
   const { type, from_date, to_date } = req.query;
-  let query = supabase.from('cash_flow').select('*').eq('school_id', req.schoolId).order('entry_date', { ascending: false });
+  let query = supabase.from('cash_flow').select('*').eq('school_id', req.schoolId).order('date', { ascending: false });
   if (type)      query = query.eq('type', type);
-  if (from_date) query = query.gte('entry_date', from_date);
-  if (to_date)   query = query.lte('entry_date', to_date);
+  if (from_date) query = query.gte('date', from_date);
+  if (to_date)   query = query.lte('date', to_date);
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
   res.json({ entries: data });
@@ -218,21 +218,27 @@ exports.initiatePaystackPayment = async (req, res) => {
 
 exports.paystackWebhook = async (req, res) => {
   const PAYSTACK_SECRET = process.env.PAYSTACK_SECRET_KEY;
+  if (!PAYSTACK_SECRET) return res.status(503).end();
+
   const signature = req.headers['x-paystack-signature'];
-  const hash = crypto.createHmac('sha512', PAYSTACK_SECRET).update(JSON.stringify(req.body)).digest('hex');
+  // req.body is a raw Buffer here (express.raw), which is what HMAC must sign
+  const rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(JSON.stringify(req.body));
+  const hash = crypto.createHmac('sha512', PAYSTACK_SECRET).update(rawBody).digest('hex');
   if (hash !== signature) return res.status(401).end();
 
-  const { event, data } = req.body;
+  const payload = Buffer.isBuffer(req.body) ? JSON.parse(rawBody.toString('utf8')) : req.body;
+  const { event, data } = payload;
   if (event === 'charge.success') {
     const { invoice_id } = data.metadata || {};
     if (invoice_id) {
       const amount = data.amount / 100;
-      const { data: inv } = await supabase.from('fee_invoices').select('amount_paid,school_id').eq('id', invoice_id).single();
+      const { data: inv } = await supabase.from('fee_invoices').select('amount, amount_paid, school_id').eq('id', invoice_id).single();
       if (inv) {
         const newPaid = Number(inv.amount_paid || 0) + Number(amount);
-        await supabase.from('fee_invoices').update({ amount_paid: newPaid }).eq('id', invoice_id);
+        const newStatus = newPaid >= Number(inv.amount) ? 'paid' : 'partial';
+        await supabase.from('fee_invoices').update({ amount_paid: newPaid, status: newStatus }).eq('id', invoice_id);
         await supabase.from('fee_payments').insert({
-          invoice_id, amount, payment_method: 'paystack',
+          invoice_id, amount, method: 'paystack',
           reference: data.reference, school_id: inv.school_id, paid_at: new Date().toISOString(),
         });
       }

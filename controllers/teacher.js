@@ -77,7 +77,7 @@ exports.classStats = async (req, res) => {
           studentAttendance[record.student_id] = { present: 0, total: 0 };
         }
         studentAttendance[record.student_id].total++;
-        if (record.status === 'Present') {
+        if (record.status === 'present') {
           studentAttendance[record.student_id].present++;
         }
       });
@@ -117,5 +117,75 @@ exports.classStats = async (req, res) => {
     console.error('Class stats error:', error);
     res.status(500).json({ error: error.message });
   }
+};
+
+exports.listAssignments = async (req, res) => {
+  const { class_id, term, year } = req.query;
+  let query = supabase
+    .from('assignments')
+    .select('*, subjects(name), classes(name)')
+    .eq('school_id', req.schoolId)
+    .order('due_date', { ascending: false });
+
+  if (class_id) query = query.eq('class_id', class_id);
+  if (term)     query = query.eq('term', String(term));
+  if (year)     query = query.eq('academic_year', String(year));
+
+  const { data, error } = await query;
+  if (error) return res.status(500).json({ error: error.message });
+
+  const assignments = (data || []).map(a => ({
+    ...a,
+    subject_name: a.subjects?.name || null,
+    class_name:   a.classes?.name || null,
+    subjects: undefined,
+    classes:  undefined,
+  }));
+  res.json({ assignments });
+};
+
+exports.createAssignment = async (req, res) => {
+  const { class_id, subject_id, title, description, due_date, max_score, term, academic_year } = req.body;
+
+  if (!class_id || !title?.trim() || !due_date) {
+    return res.status(400).json({ error: 'class_id, title, and due_date are required.' });
+  }
+
+  // Verify the class belongs to this school
+  const { data: classRow, error: classError } = await supabase
+    .from('classes').select('id').eq('id', class_id).eq('school_id', req.schoolId).single();
+  if (classError || !classRow) return res.status(404).json({ error: 'Class not found.' });
+
+  const { data, error } = await supabase
+    .from('assignments')
+    .insert({
+      school_id: req.schoolId,
+      class_id,
+      subject_id: subject_id || null,
+      teacher_id: req.profile?.id || null,
+      title: title.trim(),
+      description: description || null,
+      due_date,
+      max_score: max_score != null && max_score !== '' ? Number(max_score) : null,
+      term: term != null ? String(term) : null,
+      academic_year: academic_year != null ? String(academic_year) : null,
+    })
+    .select()
+    .single();
+
+  if (error) return res.status(400).json({ error: error.message });
+  res.status(201).json({ assignment: data });
+};
+
+exports.deleteAssignment = async (req, res) => {
+  const { id } = req.params;
+  const { error } = await supabase
+    .from('assignments')
+    .delete()
+    .eq('id', id)
+    .eq('school_id', req.schoolId);
+
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ success: true });
 };
 

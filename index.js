@@ -5,6 +5,7 @@ const compression  = require('compression');
 const rateLimit    = require('express-rate-limit');
 const helmet       = require('helmet');
 const hpp          = require('hpp');
+const crypto       = require('crypto');
 const { sanitizeRequest } = require('./middleware/sanitize');
 
 // Route modules
@@ -26,6 +27,7 @@ const gradesRouter    = require('./routes/grades');
 const reportsRouter   = require('./routes/reports');
 const alumniRouter    = require('./routes/alumni');
 const uploadRouter    = require('./routes/upload');
+const syncLogRouter   = require('./routes/syncLog');
 
 const app  = express();
 const PORT = process.env.PORT || 5000;
@@ -41,13 +43,19 @@ const authLimiter = rateLimit({
   message:          { error: 'Too many login attempts. Please try again in 15 minutes.' },
 });
 
-// General API: 300 requests per minute per IP
-// Handles a classroom of 30 teachers/admins all refreshing simultaneously
+// General API: 300 requests per minute. Keyed by the caller's token when present
+// so users on a shared school network don't consume each other's quota.
+const { ipKeyGenerator } = require('express-rate-limit');
 const apiLimiter = rateLimit({
   windowMs:         60 * 1000,
   max:              300,
   standardHeaders:  true,
   legacyHeaders:    false,
+  keyGenerator:     (req) => {
+    const auth = req.headers.authorization;
+    if (auth) return crypto.createHash('sha256').update(auth).digest('hex').slice(0, 32);
+    return ipKeyGenerator(req);
+  },
   skip:             (req) => req.path === '/health',
   message:          { error: 'Too many requests. Please slow down.' },
 });
@@ -113,7 +121,13 @@ app.use(express.json({ limit: '50kb' }));
 // Global XSS sanitization — strips HTML/script tags from ALL string inputs
 // in req.body, req.query, and req.params on every request.
 // This runs AFTER JSON parsing so the body is already an object.
-app.use(sanitizeRequest);
+// Skip /api/upload: its payloads contain large base64 image/receipt data
+// that must not be length-truncated or tag-stripped; the upload controller
+// validates format, MIME type, and size itself.
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/upload')) return next();
+  sanitizeRequest(req, res, next);
+});
 
 // ── Health check ──────────────────────────────────────────────────────────────
 app.get('/health', (_req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
@@ -142,6 +156,7 @@ app.use('/api/grades',     gradesRouter);
 app.use('/api/reports',    reportsRouter);
 app.use('/api/alumni',     alumniRouter);
 app.use('/api/upload',     uploadRouter);
+app.use('/api/sync-log',   syncLogRouter);
 
 // ── 404 handler ───────────────────────────────────────────────────────────────
 app.use((_req, res) => res.status(404).json({ error: 'Route not found.' }));

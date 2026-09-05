@@ -1,8 +1,57 @@
 const supabase = require('../supabaseClient');
+const crypto = require('crypto');
 const { pickFields, isValidUUID } = require('../middleware/sanitize');
+const { resolvePhotoUrls } = require('../utils/photoUrls');
 
 const STUDENT_FIELDS = ['first_name', 'last_name', 'dob', 'class_id', 'parent_id', 'photo_url', 'status'];
 const VALID_STATUSES = ['active', 'graduated', 'withdrawn'];
+
+// Creates a parent login account and returns its user_profile id, or null.
+async function ensureParentProfile(schoolId, { parent_email, parent_first_name, parent_last_name, parent_phone }) {
+  if (!parent_email) return null;
+  const email = String(parent_email).trim().toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    throw new Error('Parent email is invalid.');
+  }
+
+  const { data: authList } = await supabase.auth.admin.listUsers({ perPage: 1000 });
+  const existingAuth = (authList?.users || []).find(u => u.email === email);
+
+  let authUserId;
+  const initialPassword = crypto.randomBytes(5).toString('hex'); // 10-char initial password
+  if (existingAuth) {
+    authUserId = existingAuth.id;
+  } else {
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      email, password: initialPassword, email_confirm: true,
+    });
+    if (authError) throw new Error(authError.message);
+    authUserId = authData.user.id;
+  }
+
+  const { data: profileByAuth } = await supabase
+    .from('user_profiles')
+    .select('id')
+    .eq('auth_user_id', authUserId)
+    .maybeSingle();
+  if (profileByAuth) return { id: profileByAuth.id, email, initialPassword: existingAuth ? null : initialPassword };
+
+  const { data: profile, error: profileError } = await supabase
+    .from('user_profiles')
+    .insert({
+      auth_user_id: authUserId,
+      school_id:    schoolId,
+      role:         'parent',
+      first_name:   parent_first_name || 'Parent',
+      last_name:    parent_last_name  || '',
+      phone:        parent_phone || null,
+    })
+    .select()
+    .single();
+  if (profileError) throw new Error(profileError.message);
+
+  return { id: profile.id, email, initialPassword: existingAuth ? null : initialPassword };
+}
 
 exports.list = async (req, res) => {
   const schoolId = req.schoolId;
@@ -10,7 +59,7 @@ exports.list = async (req, res) => {
 
   let query = supabase
     .from('students')
-    .select('*, classes(name)')
+    .select('id, student_id, first_name, last_name, dob, photo_url, class_id, parent_id, status, classes(name)')
     .eq('school_id', schoolId)
     .order('last_name');
 
@@ -24,7 +73,7 @@ exports.list = async (req, res) => {
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
 
-  const students = (data || []).map(s => ({
+  const students = (await resolvePhotoUrls(supabase, 'student-photos', data || [])).map(s => ({
     ...s,
     class_name: s.classes?.name || null,
     classes:    undefined,
@@ -35,6 +84,7 @@ exports.list = async (req, res) => {
 
 exports.create = async (req, res) => {
   const fields = pickFields(req.body, STUDENT_FIELDS);
+  const { parent_email, parent_first_name, parent_last_name, parent_phone } = req.body;
   if (!fields.first_name || !fields.last_name) {
     return res.status(400).json({ error: 'first_name and last_name are required.' });
   }
@@ -43,7 +93,18 @@ exports.create = async (req, res) => {
   }
   if (!fields.class_id)  fields.class_id  = null;
   if (!fields.parent_id) fields.parent_id = null;
-  
+
+  // Create/link parent account first if an email was provided
+  let parentInfo = null;
+  if (parent_email && !fields.parent_id) {
+    try {
+      parentInfo = await ensureParentProfile(req.schoolId, { parent_email, parent_first_name, parent_last_name, parent_phone });
+      fields.parent_id = parentInfo.id;
+    } catch (e) {
+      return res.status(400).json({ error: `Parent account: ${e.message}` });
+    }
+  }
+
   // 1. Create student record first to get student_id
   const { data: studentData, error } = await supabase
     .from('students')
@@ -108,7 +169,8 @@ exports.create = async (req, res) => {
   
   res.status(201).json({ 
     student: { ...studentData, user_profile_id: profileData.id },
-    message: `Student enrolled successfully. Login ID: ${studentId}, Initial Password: ${studentId}`
+    message: `Student enrolled successfully. Login ID: ${studentId}, Initial Password: ${studentId}`,
+    parent: parentInfo ? { email: parentInfo.email, initial_password: parentInfo.initialPassword } : null,
   });
 };
 

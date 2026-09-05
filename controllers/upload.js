@@ -43,9 +43,9 @@ exports.uploadStudentPhoto = async (req, res) => {
     return res.status(400).json({ error: 'Invalid file format.' });
   }
 
-  // Validate file size (max 2MB)
-  if (buffer.length > 2 * 1024 * 1024) {
-    return res.status(400).json({ error: 'File too large. Maximum size is 2MB.' });
+  // Validate file size (max 5MB)
+  if (buffer.length > 5 * 1024 * 1024) {
+    return res.status(400).json({ error: 'File too large. Maximum size is 5MB.' });
   }
 
   // Generate unique filename
@@ -66,24 +66,17 @@ exports.uploadStudentPhoto = async (req, res) => {
     return res.status(500).json({ error: 'Failed to upload photo.' });
   }
 
-  // Get public URL
-  const { data: urlData } = supabase.storage
-    .from('student-photos')
-    .getPublicUrl(filePath);
-
-  const photoUrl = urlData.publicUrl;
-
   // Update student record
   const { error: updateError } = await supabase
     .from('students')
-    .update({ photo_url: photoUrl })
+    .update({ photo_url: filePath })
     .eq('id', studentId);
 
   if (updateError) {
     return res.status(500).json({ error: 'Failed to update student record.' });
   }
 
-  res.json({ photo_url: photoUrl, message: 'Photo uploaded successfully.' });
+  res.json({ photo_path: filePath, message: 'Photo uploaded successfully.' });
 };
 
 /**
@@ -151,22 +144,57 @@ exports.uploadStaffPhoto = async (req, res) => {
     return res.status(500).json({ error: 'Failed to upload photo.' });
   }
 
-  // Get public URL
-  const { data: urlData } = supabase.storage
-    .from('staff-photos')
-    .getPublicUrl(filePath);
-
-  const photoUrl = urlData.publicUrl;
-
   // Update staff record
   const { error: updateError } = await supabase
     .from('staff')
-    .update({ photo_url: photoUrl })
+    .update({ photo_url: filePath })
     .eq('id', staffId);
 
   if (updateError) {
     return res.status(500).json({ error: 'Failed to update staff record.' });
   }
 
-  res.json({ photo_url: photoUrl, message: 'Photo uploaded successfully.' });
+  res.json({ photo_path: filePath, message: 'Photo uploaded successfully.' });
+};
+
+/**
+ * POST /api/upload/receipt/:invoiceId
+ * Upload a payment receipt and return its private storage path.
+ */
+exports.uploadReceipt = async (req, res) => {
+  const { invoiceId } = req.params;
+  const { file, fileName, contentType } = req.body;
+
+  const { data: invoice, error: invoiceError } = await supabase
+    .from('fee_invoices')
+    .select('id')
+    .eq('id', invoiceId)
+    .eq('school_id', req.schoolId)
+    .single();
+  if (invoiceError || !invoice) return res.status(404).json({ error: 'Invoice not found.' });
+
+  if (typeof file !== 'string' || !file.startsWith('data:')) {
+    return res.status(400).json({ error: 'A base64-encoded receipt file is required.' });
+  }
+
+  const matches = file.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+  if (!matches || matches.length !== 3) return res.status(400).json({ error: 'Invalid base64 format.' });
+
+  const buffer = Buffer.from(matches[2], 'base64');
+  if (buffer.length > 5 * 1024 * 1024) return res.status(400).json({ error: 'File too large. Maximum size is 5MB.' });
+
+  const allowedTypes = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+  const resolvedContentType = contentType || matches[1];
+  if (!allowedTypes.includes(resolvedContentType)) {
+    return res.status(400).json({ error: 'Receipt must be a JPG, PNG, WEBP, or PDF file.' });
+  }
+
+  const ext = fileName?.split('.').pop() || resolvedContentType.split('/')[1];
+  const filePath = `${req.schoolId}/${invoiceId}-${Date.now()}.${ext}`;
+  const { error: uploadError } = await supabase.storage
+    .from('receipts')
+    .upload(filePath, buffer, { contentType: resolvedContentType, upsert: false });
+  if (uploadError) return res.status(500).json({ error: 'Failed to upload receipt.' });
+
+  res.status(201).json({ path: filePath });
 };

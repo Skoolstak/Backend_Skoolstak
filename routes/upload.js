@@ -11,4 +11,7 @@ router.post('/student-photo/:studentId', requireRole('school_admin'), ctrl.uploa
 // Upload staff photo (school_admin only)
 router.post('/staff-photo/:staffId', requireRole('school_admin'), ctrl.uploadStaffPhoto);
 
+// Upload payment receipt (school_admin only)
+router.post('/receipt/:invoiceId', requireRole('school_admin'), ctrl.uploadReceipt);
+
 module.exports = router;

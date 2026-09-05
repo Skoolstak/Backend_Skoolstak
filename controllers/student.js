@@ -156,8 +156,8 @@ exports.dashboardSummary = async (req, res) => {
       .eq('term', currentTerm);
 
     const total_days = (attendanceRecords || []).length;
-    const present_days = (attendanceRecords || []).filter(r => r.status === 'Present').length;
-    const absent_days = (attendanceRecords || []).filter(r => r.status === 'Absent').length;
+    const present_days = (attendanceRecords || []).filter(r => r.status === 'present').length;
+    const absent_days = (attendanceRecords || []).filter(r => r.status === 'absent').length;
     const attendance_rate = total_days > 0 ? Math.round((present_days / total_days) * 100) : 0;
 
     res.json({
@@ -189,7 +189,7 @@ exports.attendanceSummary = async (req, res) => {
   try {
     const { data: records } = await supabase
       .from('attendance')
-      .select('status, date, remarks')
+      .select('status, date, remark')
       .eq('school_id', req.schoolId)
       .eq('student_id', student.id)
       .eq('academic_year', currentYear)
@@ -197,9 +197,9 @@ exports.attendanceSummary = async (req, res) => {
       .order('date', { ascending: false });
 
     const total_days = (records || []).length;
-    const present_days = (records || []).filter(r => r.status === 'Present').length;
-    const absent_days = (records || []).filter(r => r.status === 'Absent').length;
-    const late_days = (records || []).filter(r => r.status === 'Late').length;
+    const present_days = (records || []).filter(r => r.status === 'present').length;
+    const absent_days = (records || []).filter(r => r.status === 'absent').length;
+    const late_days = (records || []).filter(r => r.status === 'late').length;
     const attendance_rate = total_days > 0 ? Math.round((present_days / total_days) * 100) : 0;
 
     res.json({
@@ -211,7 +211,7 @@ exports.attendanceSummary = async (req, res) => {
       records: (records || []).map(r => ({
         date: r.date,
         status: r.status,
-        remarks: r.remarks,
+        remarks: r.remark,
       })),
     });
   } catch (error) {
