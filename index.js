@@ -115,6 +115,15 @@ app.use('/api/finance/webhook', express.raw({ type: 'application/json' }));
 // Photo uploads go through /api/upload with larger limit
 app.use('/api/upload', express.json({ limit: '5mb' }));
 
+// 10MB body limit for Excel bulk imports (base64 encoded spreadsheets)
+const excelImportPaths = [
+  '/api/students/import-excel',
+  '/api/staff/import-excel',
+  '/api/classes/import-excel',
+  '/api/subjects/import-excel',
+];
+app.use(excelImportPaths, express.json({ limit: '10mb' }));
+
 // 50kb body limit for regular API requests
 app.use(express.json({ limit: '50kb' }));
 
@@ -124,8 +133,11 @@ app.use(express.json({ limit: '50kb' }));
 // Skip /api/upload: its payloads contain large base64 image/receipt data
 // that must not be length-truncated or tag-stripped; the upload controller
 // validates format, MIME type, and size itself.
+// Skip Excel import endpoints: the base64 spreadsheet payload must not be
+// truncated or altered; the import controllers validate the file themselves.
 app.use((req, res, next) => {
   if (req.path.startsWith('/api/upload')) return next();
+  if (req.path.endsWith('/import-excel')) return next();
   sanitizeRequest(req, res, next);
 });
 
@@ -169,7 +181,14 @@ app.use((err, req, res, _next) => {
   } else {
     console.error(`[500] ${req.method} ${req.path}`, err.message);
   }
-  res.status(500).json({ error: err.message || 'Internal server error.' });
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: 'File too large. Please reduce the file size and try again.' });
+  }
+  if (err.type === 'entity.parse.failed') {
+    return res.status(400).json({ error: 'Invalid request payload.' });
+  }
+  const status = err.status || err.statusCode || 500;
+  res.status(status).json({ error: err.message || 'Internal server error.' });
 });
 
 app.listen(PORT, () => {
