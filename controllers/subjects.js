@@ -94,7 +94,7 @@ exports.importExcel = async (req, res) => {
     // Decode base64
     let buffer;
     if (typeof file === 'string' && file.startsWith('data:')) {
-      const matches = file.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+      const matches = file.match(/^data:([^;,]+);base64,(.+)$/);
       if (!matches || matches.length !== 3) {
         return res.status(400).json({ error: 'Invalid base64 format.' });
       }

@@ -32,7 +32,7 @@ exports.uploadStudentPhoto = async (req, res) => {
   let buffer;
   if (typeof file === 'string' && file.startsWith('data:')) {
     // Extract base64 data
-    const matches = file.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    const matches = file.match(/^data:([^;,]+);base64,(.+)$/);
     if (!matches || matches.length !== 3) {
       return res.status(400).json({ error: 'Invalid base64 format.' });
     }
@@ -110,7 +110,7 @@ exports.uploadStaffPhoto = async (req, res) => {
   let buffer;
   if (typeof file === 'string' && file.startsWith('data:')) {
     // Extract base64 data
-    const matches = file.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+    const matches = file.match(/^data:([^;,]+);base64,(.+)$/);
     if (!matches || matches.length !== 3) {
       return res.status(400).json({ error: 'Invalid base64 format.' });
     }
@@ -177,7 +177,7 @@ exports.uploadReceipt = async (req, res) => {
     return res.status(400).json({ error: 'A base64-encoded receipt file is required.' });
   }
 
-  const matches = file.match(/^data:([A-Za-z-+\/]+);base64,(.+)$/);
+  const matches = file.match(/^data:([^;,]+);base64,(.+)$/);
   if (!matches || matches.length !== 3) return res.status(400).json({ error: 'Invalid base64 format.' });
 
   const buffer = Buffer.from(matches[2], 'base64');
