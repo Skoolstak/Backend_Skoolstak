@@ -75,6 +75,30 @@ exports.remove = async (req, res) => {
 };
 
 /**
+ * POST /api/subjects/bulk-delete
+ * Delete multiple subjects in one request. Body: { ids: string[] }
+ */
+exports.bulkRemove = async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'ids must be a non-empty array.' });
+  }
+  if (ids.length > 1000) {
+    return res.status(400).json({ error: 'Cannot delete more than 1000 records at once.' });
+  }
+  if (!ids.every(isValidUUID)) {
+    return res.status(400).json({ error: 'All ids must be valid UUIDs.' });
+  }
+  const { error, count } = await supabase
+    .from('subjects')
+    .delete({ count: 'exact' })
+    .in('id', ids)
+    .eq('school_id', req.schoolId);
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ success: true, deleted: count ?? ids.length });
+};
+
+/**
  * POST /api/subjects/import-excel
  * Bulk import subjects from Excel file
  * Expects base64 encoded Excel file in req.body.file

@@ -8,6 +8,7 @@ router.use(authMiddleware, requireRole('school_admin'));
 router.get('/',      ctrl.list);
 router.post('/',     ctrl.create);
 router.post('/import-excel', ctrl.importExcel);
+router.post('/bulk-delete',  ctrl.bulkRemove);
 router.post('/:id/reset-login', ctrl.resetLogin);
 router.put('/:id',   ctrl.update);
 router.delete('/:id',ctrl.remove);

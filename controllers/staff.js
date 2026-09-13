@@ -192,6 +192,48 @@ exports.remove = async (req, res) => {
 };
 
 /**
+ * POST /api/staff/bulk-delete
+ * Delete multiple staff members in one request. Body: { ids: string[] }
+ */
+exports.bulkRemove = async (req, res) => {
+  const { ids } = req.body;
+  if (!Array.isArray(ids) || ids.length === 0) {
+    return res.status(400).json({ error: 'ids must be a non-empty array.' });
+  }
+  if (ids.length > 1000) {
+    return res.status(400).json({ error: 'Cannot delete more than 1000 records at once.' });
+  }
+  if (!ids.every(isValidUUID)) {
+    return res.status(400).json({ error: 'All ids must be valid UUIDs.' });
+  }
+
+  // Collect linked auth user ids before deleting
+  const { data: staffRows } = await supabase
+    .from('staff')
+    .select('id, user_profiles!user_profile_id(auth_user_id)')
+    .in('id', ids)
+    .eq('school_id', req.schoolId);
+
+  const { error, count } = await supabase
+    .from('staff')
+    .delete({ count: 'exact' })
+    .in('id', ids)
+    .eq('school_id', req.schoolId);
+  if (error) return res.status(400).json({ error: error.message });
+
+  // Best-effort cleanup of auth accounts
+  for (const row of staffRows || []) {
+    const authUserId = row.user_profiles?.auth_user_id;
+    if (authUserId) {
+      try { await supabase.auth.admin.deleteUser(authUserId); }
+      catch (e) { console.warn('Auth cleanup failed for staff', row.id, e.message); }
+    }
+  }
+
+  res.json({ success: true, deleted: count ?? (staffRows || []).length });
+};
+
+/**
  * POST /api/staff/import-excel
  * Bulk import staff members from Excel file
  * Expects base64 encoded Excel file in req.body.file
