@@ -182,18 +182,15 @@ exports.resetLogin = async (req, res) => {
 exports.remove = async (req, res) => {
   if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
 
-  const { data: staffRow } = await supabase
+  // DB trigger trg_staff_delete_cleanup removes the linked
+  // user_profiles row and auth.users row automatically.
+  const { error, count } = await supabase
     .from('staff')
-    .select('user_profile_id, user_profiles!user_profile_id(auth_user_id)')
-    .eq('id', req.params.id).eq('school_id', req.schoolId).single();
-
-  if (!staffRow) return res.status(404).json({ error: 'Staff member not found.' });
-
-  const { error } = await supabase.from('staff').delete().eq('id', req.params.id).eq('school_id', req.schoolId);
+    .delete({ count: 'exact' })
+    .eq('id', req.params.id)
+    .eq('school_id', req.schoolId);
   if (error) return res.status(400).json({ error: error.message });
-
-  const authUserId = staffRow.user_profiles?.auth_user_id;
-  if (authUserId) await supabase.auth.admin.deleteUser(authUserId);
+  if (count === 0) return res.status(404).json({ error: 'Staff member not found.' });
 
   res.json({ success: true });
 };
@@ -201,6 +198,7 @@ exports.remove = async (req, res) => {
 /**
  * POST /api/staff/bulk-delete
  * Delete multiple staff members in one request. Body: { ids: string[] }
+ * DB trigger cleans up each member's user_profile + auth user.
  */
 exports.bulkRemove = async (req, res) => {
   const { ids } = req.body;
@@ -214,13 +212,6 @@ exports.bulkRemove = async (req, res) => {
     return res.status(400).json({ error: 'All ids must be valid UUIDs.' });
   }
 
-  // Collect linked auth user ids before deleting
-  const { data: staffRows } = await supabase
-    .from('staff')
-    .select('id, user_profiles!user_profile_id(auth_user_id)')
-    .in('id', ids)
-    .eq('school_id', req.schoolId);
-
   const { error, count } = await supabase
     .from('staff')
     .delete({ count: 'exact' })
@@ -228,16 +219,7 @@ exports.bulkRemove = async (req, res) => {
     .eq('school_id', req.schoolId);
   if (error) return res.status(400).json({ error: error.message });
 
-  // Best-effort cleanup of auth accounts
-  for (const row of staffRows || []) {
-    const authUserId = row.user_profiles?.auth_user_id;
-    if (authUserId) {
-      try { await supabase.auth.admin.deleteUser(authUserId); }
-      catch (e) { console.warn('Auth cleanup failed for staff', row.id, e.message); }
-    }
-  }
-
-  res.json({ success: true, deleted: count ?? (staffRows || []).length });
+  res.json({ success: true, deleted: count ?? 0 });
 };
 
 /**
