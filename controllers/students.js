@@ -215,14 +215,47 @@ exports.update = async (req, res) => {
 
 exports.remove = async (req, res) => {
   if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
+
+  // Fetch linked profile/auth before deleting so we can clean them up
+  const { data: studentRow } = await supabase
+    .from('students')
+    .select('id, user_profile_id')
+    .eq('id', req.params.id)
+    .eq('school_id', req.schoolId)
+    .maybeSingle();
+  if (!studentRow) return res.status(404).json({ error: 'Student not found.' });
+
   const { error } = await supabase
     .from('students')
     .delete()
     .eq('id', req.params.id)
     .eq('school_id', req.schoolId);
   if (error) return res.status(400).json({ error: error.message });
+
+  await cleanupStudentProfile(studentRow.user_profile_id);
+
   res.json({ success: true });
 };
+
+/** Best-effort cleanup of a student's user_profile + auth user. */
+async function cleanupStudentProfile(userProfileId) {
+  if (!userProfileId) return;
+  try {
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('id, auth_user_id')
+      .eq('id', userProfileId)
+      .maybeSingle();
+    if (!profile) return;
+
+    await supabase.from('user_profiles').delete().eq('id', profile.id);
+    if (profile.auth_user_id) {
+      await supabase.auth.admin.deleteUser(profile.auth_user_id);
+    }
+  } catch (e) {
+    console.warn('Student profile cleanup failed:', e.message);
+  }
+}
 
 /**
  * POST /api/students/bulk-delete
@@ -239,13 +272,26 @@ exports.bulkRemove = async (req, res) => {
   if (!ids.every(isValidUUID)) {
     return res.status(400).json({ error: 'All ids must be valid UUIDs.' });
   }
+
+  // Collect linked profiles before deleting
+  const { data: rows } = await supabase
+    .from('students')
+    .select('id, user_profile_id')
+    .in('id', ids)
+    .eq('school_id', req.schoolId);
+
   const { error, count } = await supabase
     .from('students')
     .delete({ count: 'exact' })
     .in('id', ids)
     .eq('school_id', req.schoolId);
   if (error) return res.status(400).json({ error: error.message });
-  res.json({ success: true, deleted: count ?? ids.length });
+
+  for (const row of rows || []) {
+    await cleanupStudentProfile(row.user_profile_id);
+  }
+
+  res.json({ success: true, deleted: count ?? (rows || []).length });
 };
 
 /**
