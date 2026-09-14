@@ -106,11 +106,18 @@ exports.create = async (req, res) => {
   }
 
   // 1. Create student record first to get student_id
-  const { data: studentData, error } = await supabase
-    .from('students')
-    .insert({ ...fields, school_id: req.schoolId })
-    .select()
-    .single();
+  // Retry once on student_id unique collision (trigger generates a fresh ID)
+  async function insertStudent() {
+    return supabase
+      .from('students')
+      .insert({ ...fields, school_id: req.schoolId })
+      .select()
+      .single();
+  }
+  let { data: studentData, error } = await insertStudent();
+  if (error && /students_student_id_key/.test(error.message || '')) {
+    ({ data: studentData, error } = await insertStudent());
+  }
   if (error) return res.status(400).json({ error: error.message });
 
   // 2. Provision the student's login account (reuses an existing one if present)
@@ -298,12 +305,17 @@ exports.importExcel = async (req, res) => {
           status: 'active',
         };
 
-        // 1. Create student record
-        const { data: student, error } = await supabase
+        // 1. Create student record (retry once on student_id unique collision)
+        const insertStudentRow = () => supabase
           .from('students')
           .insert(studentData)
           .select()
           .single();
+
+        let { data: student, error } = await insertStudentRow();
+        if (error && /students_student_id_key/.test(error.message || '')) {
+          ({ data: student, error } = await insertStudentRow());
+        }
 
         if (error) {
           results.failed++;

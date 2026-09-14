@@ -80,11 +80,18 @@ exports.create = async (req, res) => {
   }
 
   // 3. Create staff row
-  const { data: staffRow, error: staffErr } = await supabase
-    .from('staff')
-    .insert({ school_id: req.schoolId, user_profile_id: profileRow.id, department: department || null, designation: designation || null })
-    .select()
-    .single();
+  // Retry once on staff_id unique collision (trigger generates a fresh ID)
+  async function insertStaff() {
+    return supabase
+      .from('staff')
+      .insert({ school_id: req.schoolId, user_profile_id: profileRow.id, department: department || null, designation: designation || null })
+      .select()
+      .single();
+  }
+  let { data: staffRow, error: staffErr } = await insertStaff();
+  if (staffErr && /staff_staff_id_key/.test(staffErr.message || '')) {
+    ({ data: staffRow, error: staffErr } = await insertStaff());
+  }
 
   if (staffErr) {
     await supabase.auth.admin.deleteUser(authUserId);
@@ -326,15 +333,22 @@ exports.importExcel = async (req, res) => {
           continue;
         }
 
-        // 3. Create staff row
-        const { data: staffRow, error: staffErr } = await supabase
+        // 3. Create staff row (retry once on staff_id unique collision)
+        const staffInsert = () => supabase
           .from('staff')
           .insert({
             school_id: req.schoolId,
             user_profile_id: profileRow.id,
             department: row.department ? String(row.department).trim() : null,
             designation: row.designation ? String(row.designation).trim() : null,
-          });
+          })
+          .select()
+          .single();
+
+        let { data: staffRow, error: staffErr } = await staffInsert();
+        if (staffErr && /staff_staff_id_key/.test(staffErr.message || '')) {
+          ({ data: staffRow, error: staffErr } = await staffInsert());
+        }
 
         if (staffErr) {
           await supabase.auth.admin.deleteUser(authUserId);
