@@ -138,11 +138,13 @@ exports.importExcel = async (req, res) => {
     const results = { success: 0, failed: 0, errors: [] };
 
     // Process each row
-    for (const row of data) {
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const rowNum = i + 2; // +1 for 0-index, +1 for header row
       try {
         if (!row.name) {
           results.failed++;
-          results.errors.push({ row, error: 'Missing name' });
+          results.errors.push({ row: rowNum, error: 'Missing name' });
           continue;
         }
 
@@ -160,13 +162,13 @@ exports.importExcel = async (req, res) => {
 
         if (error) {
           results.failed++;
-          results.errors.push({ row, error: error.message });
+          results.errors.push({ row: rowNum, error: error.message });
         } else {
           results.success++;
         }
       } catch (err) {
         results.failed++;
-        results.errors.push({ row, error: err.message });
+        results.errors.push({ row: rowNum, error: err.message });
       }
     }
 

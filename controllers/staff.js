@@ -263,18 +263,20 @@ exports.importExcel = async (req, res) => {
     const results = { success: 0, failed: 0, errors: [] };
 
     // Process each row
-    for (const row of data) {
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const rowNum = i + 2; // +1 for 0-index, +1 for header row
       try {
         if (!row.first_name || !row.last_name || !row.email) {
           results.failed++;
-          results.errors.push({ row, error: 'Missing first_name, last_name, or email' });
+          results.errors.push({ row: rowNum, error: 'Missing first_name, last_name, or email' });
           continue;
         }
 
         const email = String(row.email).trim();
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
           results.failed++;
-          results.errors.push({ row, error: 'Invalid email address' });
+          results.errors.push({ row: rowNum, error: 'Invalid email address' });
           continue;
         }
 
@@ -288,7 +290,7 @@ exports.importExcel = async (req, res) => {
         });
         if (authError) {
           results.failed++;
-          results.errors.push({ row, error: authError.message });
+          results.errors.push({ row: rowNum, error: authError.message });
           continue;
         }
 
@@ -311,7 +313,7 @@ exports.importExcel = async (req, res) => {
         if (profileErr) {
           await supabase.auth.admin.deleteUser(authUserId);
           results.failed++;
-          results.errors.push({ row, error: profileErr.message });
+          results.errors.push({ row: rowNum, error: profileErr.message });
           continue;
         }
 
@@ -336,7 +338,7 @@ exports.importExcel = async (req, res) => {
           await supabase.auth.admin.deleteUser(authUserId);
           await supabase.from('user_profiles').delete().eq('id', profileRow.id);
           results.failed++;
-          results.errors.push({ row, error: staffErr.message });
+          results.errors.push({ row: rowNum, error: staffErr.message });
           continue;
         }
 
@@ -347,14 +349,14 @@ exports.importExcel = async (req, res) => {
           await supabase.from('staff').delete().eq('id', staffRow.id);
           await supabase.auth.admin.deleteUser(authUserId);
           results.failed++;
-          results.errors.push({ row, error: 'Unable to set the teacher login password.' });
+          results.errors.push({ row: rowNum, error: 'Unable to set the teacher login password.' });
           continue;
         }
 
         results.success++;
       } catch (err) {
         results.failed++;
-        results.errors.push({ row, error: err.message });
+        results.errors.push({ row: rowNum, error: err.message });
       }
     }
 

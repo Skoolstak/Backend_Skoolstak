@@ -75,8 +75,11 @@ exports.issueBook = async (req, res) => {
     return res.status(400).json({ error: 'A valid student_id is required.' });
   }
 
-  // Check availability
-  const { data: book } = await supabase.from('books').select('quantity').eq('id', book_id).single();
+  // Check availability (scoped to this school so cross-tenant IDs can't be referenced)
+  const { data: book } = await supabase.from('books').select('quantity').eq('id', book_id).eq('school_id', req.schoolId).single();
+  if (!book) return res.status(404).json({ error: 'Book not found.' });
+  const { data: student } = await supabase.from('students').select('id').eq('id', student_id).eq('school_id', req.schoolId).single();
+  if (!student) return res.status(404).json({ error: 'Student not found.' });
   const { count: loaned } = await supabase.from('book_loans').select('*', { count:'exact', head:true }).eq('book_id', book_id).is('returned_at', null);
   if (Number(book?.quantity || 0) - Number(loaned || 0) <= 0) {
     return res.status(400).json({ error: 'No copies available.' });

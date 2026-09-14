@@ -295,11 +295,13 @@ exports.importExcel = async (req, res) => {
     const results = { success: 0, failed: 0, errors: [] };
 
     // Expected columns: first_name, last_name, dob (optional)
-    for (const row of data) {
+    for (let i = 0; i < data.length; i++) {
+      const row = data[i];
+      const rowNum = i + 2; // +1 for 0-index, +1 for header row
       try {
         if (!row.first_name || !row.last_name) {
           results.failed++;
-          results.errors.push({ row, error: 'Missing first_name or last_name' });
+          results.errors.push({ row: rowNum, error: 'Missing first_name or last_name' });
           continue;
         }
 
@@ -326,7 +328,7 @@ exports.importExcel = async (req, res) => {
 
         if (error) {
           results.failed++;
-          results.errors.push({ row, error: error.message });
+          results.errors.push({ row: rowNum, error: error.message });
           continue;
         }
 
@@ -377,7 +379,7 @@ exports.importExcel = async (req, res) => {
         results.success++;
       } catch (err) {
         results.failed++;
-        results.errors.push({ row, error: err.message });
+        results.errors.push({ row: rowNum, error: err.message });
       }
     }
 

@@ -80,6 +80,11 @@ exports.createInvoice = async (req, res) => {
   if (fields.status && !INVOICE_STATUSES.includes(fields.status)) {
     return res.status(400).json({ error: `status must be one of: ${INVOICE_STATUSES.join(', ')}.` });
   }
+  // Ensure both references belong to the caller's own school
+  const { data: student } = await supabase.from('students').select('id').eq('id', fields.student_id).eq('school_id', req.schoolId).single();
+  if (!student) return res.status(404).json({ error: 'Student not found.' });
+  const { data: feeType } = await supabase.from('fee_types').select('id').eq('id', fields.fee_type_id).eq('school_id', req.schoolId).single();
+  if (!feeType) return res.status(404).json({ error: 'Fee type not found.' });
   const { data, error } = await supabase.from('fee_invoices').insert({ ...fields, school_id: req.schoolId }).select().single();
   if (error) return res.status(400).json({ error: error.message });
   res.status(201).json({ invoice: data });
@@ -122,6 +127,15 @@ exports.recordPayment = async (req, res) => {
     return res.status(400).json({ error: 'amount must be a positive number.' });
   }
 
+  // 0. Verify the invoice belongs to the caller's school before touching it
+  const { data: inv, error: invError } = await supabase
+    .from('fee_invoices')
+    .select('amount, amount_paid')
+    .eq('id', invoice_id)
+    .eq('school_id', req.schoolId)
+    .single();
+  if (invError || !inv) return res.status(404).json({ error: 'Invoice not found.' });
+
   // 1. Record payment
   const { data: payment, error } = await supabase.from('fee_payments')
     .insert({ invoice_id, amount, method: payment_method, reference, school_id: req.schoolId, paid_at: new Date().toISOString() })
@@ -129,11 +143,10 @@ exports.recordPayment = async (req, res) => {
   if (error) return res.status(400).json({ error: error.message });
 
   // 2. Update invoice amount_paid and derive status
-  const { data: inv } = await supabase.from('fee_invoices').select('amount, amount_paid').eq('id', invoice_id).single();
-  const newPaid   = Number(inv?.amount_paid || 0) + Number(amount);
-  const total     = Number(inv?.amount || 0);
+  const newPaid   = Number(inv.amount_paid || 0) + Number(amount);
+  const total     = Number(inv.amount || 0);
   const newStatus = newPaid >= total ? 'paid' : newPaid > 0 ? 'partial' : 'unpaid';
-  await supabase.from('fee_invoices').update({ amount_paid: newPaid, status: newStatus }).eq('id', invoice_id);
+  await supabase.from('fee_invoices').update({ amount_paid: newPaid, status: newStatus }).eq('id', invoice_id).eq('school_id', req.schoolId);
 
   res.status(201).json({ payment });
 };
@@ -194,6 +207,7 @@ exports.initiatePaystackPayment = async (req, res) => {
   const { data: inv } = await supabase.from('fee_invoices')
     .select('*, students(email), fee_types(name)')
     .eq('id', invoice_id)
+    .eq('school_id', req.schoolId)
     .single();
   if (!inv) return res.status(404).json({ error: 'Invoice not found.' });
 
