@@ -331,7 +331,7 @@ exports.generateInvoicePDF = async (req, res) => {
 
     // Table header
     doc.fontSize(12).text('Description', 50, 280);
-    doc.text('Amount (₵)', 400, 280);
+    doc.text('Amount (GHS)', 400, 280);
     doc.moveTo(50, 295).lineTo(550, 295).stroke();
 
     // Fee details
@@ -345,11 +345,11 @@ exports.generateInvoicePDF = async (req, res) => {
 
     doc.moveTo(50, 340).lineTo(550, 340).stroke();
     doc.fontSize(12).text('Total Amount:', 350, 350);
-    doc.text(`₵${Number(invoice.amount).toFixed(2)}`, 450, 350);
+    doc.text(`GHS ${Number(invoice.amount).toFixed(2)}`, 450, 350);
     doc.text('Amount Paid:', 350, 370);
-    doc.text(`₵${amountPaid.toFixed(2)}`, 450, 370);
+    doc.text(`GHS ${amountPaid.toFixed(2)}`, 450, 370);
     doc.text('Balance Due:', 350, 390);
-    doc.fontSize(14).text(`₵${balance.toFixed(2)}`, 450, 390);
+    doc.fontSize(14).text(`GHS ${balance.toFixed(2)}`, 450, 390);
 
     // Status
     doc.fontSize(10);
@@ -445,7 +445,7 @@ exports.generateReceiptPDF = async (req, res) => {
     // Amount box
     doc.rect(50, 340, 500, 60).stroke();
     doc.fontSize(14).text('Amount Paid:', 60, 360);
-    doc.fontSize(20).text(`₵${Number(payment.amount).toFixed(2)}`, 350, 355);
+    doc.fontSize(20).text(`GHS ${Number(payment.amount).toFixed(2)}`, 350, 355);
 
     // Footer
     doc.fontSize(8).text('This is an official receipt. Please keep for your records.', 50, 700, { align: 'center' });
