@@ -32,6 +32,12 @@ exports.upsert = async (req, res) => {
   if (fields.day && !VALID_DAYS.includes(fields.day)) {
     return res.status(400).json({ error: `day must be one of: ${VALID_DAYS.join(', ')}.` });
   }
+  if (fields.period != null) {
+    fields.period = parseInt(fields.period, 10);
+    if (isNaN(fields.period) || fields.period < 1 || fields.period > 11) {
+      return res.status(400).json({ error: 'period must be between 1 and 11.' });
+    }
+  }
   if (!fields.teacher_id) fields.teacher_id = null;
   const payload = { ...fields, school_id: req.schoolId };
   const { data, error } = await supabase

@@ -42,4 +42,4 @@ async function resolvePhotoUrls(supabase, bucket, rows, field = 'photo_url') {
   });
 }
 
-module.exports = { resolvePhotoUrl, resolvePhotoUrls };
+module.exports = { resolvePhotoUrl, resolvePhotoUrls, extractStoragePath };

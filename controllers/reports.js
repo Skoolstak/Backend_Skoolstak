@@ -314,109 +314,77 @@ exports.pdf = async (req, res) => {
     : 'Student';
   const className   = report.classes?.name || '—';
   const schoolName  = report.schools?.name || 'School';
-  const gradeRows   = (grades || []).map(g => `
-    <tr>
-      <td>${g.subjects?.name || '—'}</td>
-      <td class="center">${g.ca_score ?? '—'}</td>
-      <td class="center">${g.exam_score ?? '—'}</td>
-      <td class="center"><strong>${g.total_score ?? '—'}</strong></td>
-      <td class="center"><span class="grade grade-${(g.grade || 'F9').replace(/\d/, '')}">${g.grade || '—'}</span></td>
-      <td>${g.remarks || ''}</td>
-    </tr>`).join('');
 
-  const html = `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8"/>
-  <title>Report Card — ${studentName}</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { font-family: 'Segoe UI', Arial, sans-serif; font-size: 13px; color: #1a1a1a; padding: 30px; }
-    .header { text-align: center; border-bottom: 3px solid #1e3a5f; padding-bottom: 16px; margin-bottom: 20px; }
-    .header h1 { font-size: 22px; color: #1e3a5f; }
-    .header p  { font-size: 13px; color: #555; margin-top: 4px; }
-    .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin-bottom: 20px; }
-    .info-grid div { display: flex; gap: 8px; }
-    .info-grid label { font-weight: 600; min-width: 130px; color: #1e3a5f; }
-    table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-    th { background: #1e3a5f; color: #fff; padding: 8px 10px; text-align: left; font-size: 12px; }
-    td { padding: 7px 10px; border-bottom: 1px solid #e5e7eb; }
-    tr:nth-child(even) td { background: #f9fafb; }
-    .center { text-align: center; }
-    .grade { padding: 2px 8px; border-radius: 4px; font-weight: 700; font-size: 12px; }
-    .grade-A { background: #d1fae5; color: #065f46; }
-    .grade-B { background: #dbeafe; color: #1e40af; }
-    .grade-C { background: #fef9c3; color: #854d0e; }
-    .grade-D { background: #ffedd5; color: #9a3412; }
-    .grade-E { background: #ffe4e6; color: #9f1239; }
-    .grade-F { background: #fee2e2; color: #7f1d1d; }
-    .summary { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 20px; }
-    .summary-box { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; text-align: center; }
-    .summary-box .val { font-size: 20px; font-weight: 700; color: #1e3a5f; }
-    .summary-box .lbl { font-size: 11px; color: #6b7280; margin-top: 2px; }
-    .remarks { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 20px; }
-    .remark-box { border: 1px solid #e5e7eb; border-radius: 8px; padding: 12px; }
-    .remark-box h4 { font-size: 12px; color: #6b7280; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.05em; }
-    .remark-box p { font-size: 13px; min-height: 36px; }
-    .footer { text-align: center; font-size: 11px; color: #9ca3af; border-top: 1px solid #e5e7eb; padding-top: 12px; }
-    @media print { body { padding: 15px; } }
-  </style>
-</head>
-<body>
-  <div class="header">
-    <h1>${schoolName}</h1>
-    <p>Student Academic Report Card</p>
-    <p>${report.term} &bull; Academic Year: ${report.academic_year}</p>
-  </div>
+  try {
+    const PDFDocument = require('pdfkit');
+    const doc = new PDFDocument({ margin: 50, size: 'A4' });
 
-  <div class="info-grid">
-    <div><label>Student Name:</label><span>${studentName}</span></div>
-    <div><label>Class:</label><span>${className}</span></div>
-    <div><label>Term:</label><span>${report.term}</span></div>
-    <div><label>Academic Year:</label><span>${report.academic_year}</span></div>
-    <div><label>Class Position:</label><span>${report.class_position ? `${report.class_position} / ${report.class_size}` : '—'}</span></div>
-    <div><label>Attendance Rate:</label><span>${report.attendance_rate ?? '—'}%</span></div>
-  </div>
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="report-${report.id}.pdf"`);
+    doc.pipe(res);
 
-  <div class="summary">
-    <div class="summary-box"><div class="val">${report.total_subjects}</div><div class="lbl">Subjects</div></div>
-    <div class="summary-box"><div class="val">${report.average_score ?? '—'}</div><div class="lbl">Average Score</div></div>
-    <div class="summary-box"><div class="val">${report.aggregate_score ?? '—'}</div><div class="lbl">Aggregate</div></div>
-    <div class="summary-box"><div class="val">${report.overall_grade ?? '—'}</div><div class="lbl">Overall Grade</div></div>
-  </div>
+    doc.fontSize(18).text(schoolName, { align: 'center' });
+    doc.fontSize(11).fillColor('#555').text('Student Academic Report Card', { align: 'center' });
+    doc.text(`${report.term} · Academic Year: ${report.academic_year}`, { align: 'center' });
+    doc.fillColor('#000').moveDown(1.5);
 
-  <table>
-    <thead>
-      <tr>
-        <th>Subject</th>
-        <th class="center">CA (30)</th>
-        <th class="center">Exam (70)</th>
-        <th class="center">Total (100)</th>
-        <th class="center">Grade</th>
-        <th>Remarks</th>
-      </tr>
-    </thead>
-    <tbody>${gradeRows}</tbody>
-  </table>
+    doc.fontSize(11);
+    doc.text(`Student Name: ${studentName}`);
+    doc.text(`Class: ${className}`);
+    doc.text(`Class Position: ${report.class_position ? `${report.class_position} / ${report.class_size}` : '—'}`);
+    doc.text(`Attendance Rate: ${report.attendance_rate ?? '—'}%`);
+    doc.moveDown();
 
-  <div class="remarks">
-    <div class="remark-box">
-      <h4>Class Teacher's Remarks</h4>
-      <p>${report.teacher_remarks || 'No remarks added.'}</p>
-    </div>
-    <div class="remark-box">
-      <h4>Principal's Remarks</h4>
-      <p>${report.principal_remarks || 'No remarks added.'}</p>
-    </div>
-  </div>
+    doc.fontSize(12).text(
+      `Subjects: ${report.total_subjects ?? 0}    Average: ${report.average_score ?? '—'}    ` +
+      `Aggregate: ${report.aggregate_score ?? '—'}    Overall Grade: ${report.overall_grade ?? '—'}`
+    );
+    doc.moveDown();
 
-  <div class="footer">
-    <p>Generated by Skoolstak &bull; ${new Date().toLocaleDateString('en-GH', { year: 'numeric', month: 'long', day: 'numeric' })}</p>
-    <p style="margin-top:4px;color:#d1d5db;">GRADING: A1=80-100 &bull; B2=70-79 &bull; B3=60-69 &bull; C4=55-59 &bull; C5=50-54 &bull; C6=45-49 &bull; D7=40-44 &bull; E8=35-39 &bull; F9=0-34</p>
-  </div>
-</body>
-</html>`;
+    // Grades table
+    const colX = { subject: 50, ca: 260, exam: 320, total: 390, grade: 450, remarks: 500 };
+    const tableTop = doc.y;
+    doc.fontSize(10).fillColor('#fff');
+    doc.rect(50, tableTop, 500, 20).fill('#1e3a5f');
+    doc.fillColor('#fff');
+    doc.text('Subject', colX.subject + 5, tableTop + 5);
+    doc.text('CA', colX.ca, tableTop + 5);
+    doc.text('Exam', colX.exam, tableTop + 5);
+    doc.text('Total', colX.total, tableTop + 5);
+    doc.text('Grade', colX.grade, tableTop + 5);
+    doc.fillColor('#000');
 
-  res.setHeader('Content-Type', 'text/html');
-  res.send(html);
+    let y = tableTop + 20;
+    for (const g of grades || []) {
+      if (y > 720) { doc.addPage(); y = 50; }
+      doc.fontSize(9);
+      doc.text(g.subjects?.name || '—', colX.subject + 5, y + 5, { width: 200 });
+      doc.text(String(g.ca_score ?? '—'), colX.ca, y + 5);
+      doc.text(String(g.exam_score ?? '—'), colX.exam, y + 5);
+      doc.text(String(g.total_score ?? '—'), colX.total, y + 5);
+      doc.text(g.grade || '—', colX.grade, y + 5);
+      doc.moveTo(50, y + 20).lineTo(550, y + 20).strokeColor('#e5e7eb').stroke();
+      y += 20;
+    }
+    doc.y = y + 15;
+
+    doc.fontSize(11).text('Class Teacher\'s Remarks:', 50, doc.y);
+    doc.fontSize(10).text(report.teacher_remarks || 'No remarks added.', { width: 500 });
+    doc.moveDown();
+    doc.fontSize(11).text('Principal\'s Remarks:');
+    doc.fontSize(10).text(report.principal_remarks || 'No remarks added.', { width: 500 });
+
+    doc.fontSize(8).fillColor('#9ca3af').text(
+      `Generated by Skoolstak · ${new Date().toLocaleDateString('en-GH', { year: 'numeric', month: 'long', day: 'numeric' })}`,
+      50, 780, { align: 'center', width: 500 }
+    );
+
+    doc.end();
+  } catch (err) {
+    if (err.code === 'MODULE_NOT_FOUND') {
+      return res.status(500).json({ error: 'PDF library not installed. Run: npm install pdfkit' });
+    }
+    console.error('Report PDF generation error:', err);
+    res.status(500).json({ error: 'Failed to generate PDF.' });
+  }
 };

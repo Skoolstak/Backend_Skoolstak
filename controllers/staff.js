@@ -16,7 +16,8 @@ exports.list = async (req, res) => {
   const { data, error } = await supabase
     .from('staff')
     .select('id, staff_id, photo_url, department, designation, user_profiles!user_profile_id(id, first_name, last_name, role, phone)')
-    .eq('school_id', req.schoolId);
+    .eq('school_id', req.schoolId)
+    .limit(2000); // safety cap — prevents one request from pulling unbounded rows at large scale
 
   if (error) return res.status(500).json({ error: error.message });
 

@@ -171,7 +171,7 @@ exports.uploadReceipt = async (req, res) => {
     .eq('id', invoiceId)
     .eq('school_id', req.schoolId)
     .single();
-  if (invoiceError || !invoice) return res.status(404).json({ error: 'Invoice not found.' });
+  if (invoiceError || !invoice) return res.status(404).json({ error: 'Invoice not found (receipt upload step).' });
 
   if (typeof file !== 'string' || !file.startsWith('data:')) {
     return res.status(400).json({ error: 'A base64-encoded receipt file is required.' });

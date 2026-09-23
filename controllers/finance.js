@@ -21,6 +21,10 @@ exports.createFeeType = async (req, res) => {
   if (!fields.name || fields.amount == null) {
     return res.status(400).json({ error: 'name and amount are required.' });
   }
+  fields.amount = parseFloat(fields.amount);
+  if (isNaN(fields.amount) || fields.amount <= 0) {
+    return res.status(400).json({ error: 'amount must be a positive number.' });
+  }
   const { data, error } = await supabase.from('fee_types').insert({ ...fields, school_id: req.schoolId }).select().single();
   if (error) return res.status(400).json({ error: error.message });
   res.status(201).json({ fee_type: data });
@@ -77,6 +81,10 @@ exports.createInvoice = async (req, res) => {
   if (!fields.fee_type_id || !isValidUUID(fields.fee_type_id)) {
     return res.status(400).json({ error: 'A valid fee_type_id is required.' });
   }
+  if (fields.amount == null || isNaN(parseFloat(fields.amount)) || parseFloat(fields.amount) <= 0) {
+    return res.status(400).json({ error: 'amount must be a positive number.' });
+  }
+  fields.amount = parseFloat(fields.amount);
   if (fields.status && !INVOICE_STATUSES.includes(fields.status)) {
     return res.status(400).json({ error: `status must be one of: ${INVOICE_STATUSES.join(', ')}.` });
   }
@@ -134,7 +142,7 @@ exports.recordPayment = async (req, res) => {
     .eq('id', invoice_id)
     .eq('school_id', req.schoolId)
     .single();
-  if (invError || !inv) return res.status(404).json({ error: 'Invoice not found.' });
+  if (invError || !inv) return res.status(404).json({ error: 'Invoice not found (payment step).' });
 
   // 1. Record payment
   const { data: payment, error } = await supabase.from('fee_payments')

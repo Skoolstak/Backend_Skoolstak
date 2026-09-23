@@ -1,7 +1,7 @@
 const supabase = require('../supabaseClient');
 const crypto = require('crypto');
 const { pickFields, isValidUUID } = require('../middleware/sanitize');
-const { resolvePhotoUrls } = require('../utils/photoUrls');
+const { resolvePhotoUrls, extractStoragePath } = require('../utils/photoUrls');
 
 const STUDENT_FIELDS = ['first_name', 'last_name', 'dob', 'class_id', 'parent_id', 'photo_url', 'status'];
 const VALID_STATUSES = ['active', 'graduated', 'withdrawn'];
@@ -61,7 +61,8 @@ exports.list = async (req, res) => {
     .from('students')
     .select('id, student_id, first_name, last_name, dob, photo_url, class_id, parent_id, status, classes(name)')
     .eq('school_id', schoolId)
-    .order('last_name');
+    .order('last_name')
+    .limit(2000); // safety cap — prevents one request from pulling unbounded rows at large scale
 
   if (search) {
     const safe = search.replace(/[%_\\]/g, '\\$&').slice(0, 100);
@@ -213,11 +214,28 @@ exports.update = async (req, res) => {
   res.json({ student: data });
 };
 
+// Removes stored photo files for the given students — DB rows cascade via FK,
+// but Storage objects don't, so they'd otherwise be left orphaned.
+async function cleanupStudentPhotos(students) {
+  const paths = students.map(s => extractStoragePath(s.photo_url, 'student-photos')).filter(Boolean);
+  if (paths.length === 0) return;
+  const { error } = await supabase.storage.from('student-photos').remove(paths);
+  if (error) console.warn('Failed to remove student photo(s) from storage:', error.message);
+}
+
 exports.remove = async (req, res) => {
   if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
 
-  // DB trigger trg_student_delete_cleanup removes the linked
-  // user_profiles row and auth.users row automatically.
+  const { data: existing } = await supabase
+    .from('students')
+    .select('photo_url')
+    .eq('id', req.params.id)
+    .eq('school_id', req.schoolId)
+    .single();
+
+  // DB trigger trg_student_delete_cleanup removes the linked user_profiles row
+  // and auth.users row; ON DELETE CASCADE removes attendance, grades, fee
+  // invoices/payments, book loans, assignment submissions, and term reports.
   const { error, count } = await supabase
     .from('students')
     .delete({ count: 'exact' })
@@ -225,13 +243,17 @@ exports.remove = async (req, res) => {
     .eq('school_id', req.schoolId);
   if (error) return res.status(400).json({ error: error.message });
   if (count === 0) return res.status(404).json({ error: 'Student not found.' });
+
+  if (existing) await cleanupStudentPhotos([existing]);
+
   res.json({ success: true });
 };
 
 /**
  * POST /api/students/bulk-delete
  * Delete multiple students in one request. Body: { ids: string[] }
- * DB trigger cleans up each student's user_profile + auth user.
+ * DB trigger + ON DELETE CASCADE clean up each student's linked account and
+ * all affiliated records (attendance, grades, invoices, payments, etc).
  */
 exports.bulkRemove = async (req, res) => {
   const { ids } = req.body;
@@ -245,12 +267,20 @@ exports.bulkRemove = async (req, res) => {
     return res.status(400).json({ error: 'All ids must be valid UUIDs.' });
   }
 
+  const { data: existing } = await supabase
+    .from('students')
+    .select('photo_url')
+    .in('id', ids)
+    .eq('school_id', req.schoolId);
+
   const { error, count } = await supabase
     .from('students')
     .delete({ count: 'exact' })
     .in('id', ids)
     .eq('school_id', req.schoolId);
   if (error) return res.status(400).json({ error: error.message });
+
+  if (existing?.length) await cleanupStudentPhotos(existing);
 
   res.json({ success: true, deleted: count ?? 0 });
 };

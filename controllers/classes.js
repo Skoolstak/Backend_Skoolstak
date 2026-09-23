@@ -26,6 +26,7 @@ exports.create = async (req, res) => {
   const fields = pickFields(req.body, CLASS_FIELDS);
   if (!fields.name) return res.status(400).json({ error: 'name is required.' });
   if (!fields.teacher_id) fields.teacher_id = null;
+  fields.capacity = fields.capacity ? parseInt(fields.capacity, 10) || null : null;
   const { data, error } = await supabase
     .from('classes')
     .insert({ ...fields, school_id: req.schoolId })
@@ -39,6 +40,7 @@ exports.update = async (req, res) => {
   if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
   const fields = pickFields(req.body, CLASS_FIELDS);
   if (!fields.teacher_id) fields.teacher_id = null;
+  if ('capacity' in fields) fields.capacity = fields.capacity ? parseInt(fields.capacity, 10) || null : null;
   const { data, error } = await supabase
     .from('classes')
     .update(fields)

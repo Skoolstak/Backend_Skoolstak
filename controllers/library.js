@@ -13,7 +13,22 @@ exports.listBooks = async (req, res) => {
     .order('title');
   if (error) return res.status(500).json({ error: error.message });
 
-  res.json({ books: data });
+  // 'available' can drift from reality (issue/return don't touch this column),
+  // so recompute it live from quantity minus currently-active loans.
+  const { data: activeLoans } = await supabase
+    .from('book_loans')
+    .select('book_id')
+    .eq('school_id', req.schoolId)
+    .is('returned_at', null);
+  const loanedByBook = {};
+  for (const l of activeLoans || []) loanedByBook[l.book_id] = (loanedByBook[l.book_id] || 0) + 1;
+
+  const books = data.map(b => ({
+    ...b,
+    available: Math.max(0, Number(b.quantity || 0) - (loanedByBook[b.id] || 0)),
+  }));
+
+  res.json({ books });
 };
 
 exports.createBook = async (req, res) => {
@@ -35,6 +50,8 @@ exports.updateBook = async (req, res) => {
   if (fields.book_type && !VALID_BOOK_TYPES.includes(fields.book_type)) {
     return res.status(400).json({ error: `book_type must be one of: ${VALID_BOOK_TYPES.join(', ')}.` });
   }
+  if (fields.quantity != null) fields.quantity = Math.max(0, parseInt(fields.quantity, 10) || 0);
+  delete fields.available; // derived at read time, not stored via this endpoint
   const { data, error } = await supabase.from('books').update(fields).eq('id', req.params.id).eq('school_id', req.schoolId).select().single();
   if (error) return res.status(400).json({ error: error.message });
   res.json({ book: data });

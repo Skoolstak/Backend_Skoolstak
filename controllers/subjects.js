@@ -165,7 +165,9 @@ exports.importExcel = async (req, res) => {
           code: row.code ? String(row.code).trim() : null,
           class_id: subjectClassId,
           teacher_id: null,
-          is_active: row.is_active !== undefined ? Boolean(row.is_active) : true,
+          is_active: row.is_active !== undefined
+            ? !['false', '0', 'no', ''].includes(String(row.is_active).trim().toLowerCase())
+            : true,
         };
 
         const { error } = await supabase
