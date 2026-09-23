@@ -98,6 +98,80 @@ exports.createInvoice = async (req, res) => {
   res.status(201).json({ invoice: data });
 };
 
+/**
+ * PUT /api/finance/invoices/:id
+ * Correct a mistaken invoice (amount, due date, fee type, etc).
+ * Blocked once a payment has been recorded, to avoid invoices silently
+ * drifting out of sync with amount_paid / recorded fee_payments rows.
+ */
+exports.updateInvoice = async (req, res) => {
+  if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
+  const fields = pickFields(req.body, INVOICE_FIELDS);
+  if (fields.amount != null) {
+    if (isNaN(parseFloat(fields.amount)) || parseFloat(fields.amount) <= 0) {
+      return res.status(400).json({ error: 'amount must be a positive number.' });
+    }
+    fields.amount = parseFloat(fields.amount);
+  }
+  if (fields.status && !INVOICE_STATUSES.includes(fields.status)) {
+    return res.status(400).json({ error: `status must be one of: ${INVOICE_STATUSES.join(', ')}.` });
+  }
+
+  const { data: existing } = await supabase
+    .from('fee_invoices')
+    .select('amount_paid')
+    .eq('id', req.params.id)
+    .eq('school_id', req.schoolId)
+    .single();
+  if (!existing) return res.status(404).json({ error: 'Invoice not found.' });
+  if (Number(existing.amount_paid || 0) > 0) {
+    return res.status(400).json({ error: 'Cannot edit an invoice that already has payments recorded. Delete the payment first.' });
+  }
+
+  if (fields.student_id) {
+    const { data: student } = await supabase.from('students').select('id').eq('id', fields.student_id).eq('school_id', req.schoolId).single();
+    if (!student) return res.status(404).json({ error: 'Student not found.' });
+  }
+  if (fields.fee_type_id) {
+    const { data: feeType } = await supabase.from('fee_types').select('id').eq('id', fields.fee_type_id).eq('school_id', req.schoolId).single();
+    if (!feeType) return res.status(404).json({ error: 'Fee type not found.' });
+  }
+
+  const { data, error } = await supabase.from('fee_invoices').update(fields).eq('id', req.params.id).eq('school_id', req.schoolId).select().single();
+  if (error) return res.status(400).json({ error: error.message });
+  res.json({ invoice: data });
+};
+
+/**
+ * DELETE /api/finance/invoices/:id
+ * Blocked once a payment has been recorded — delete the payment first
+ * (fee_payments cascade-deletes with the invoice, which would silently
+ * destroy financial history otherwise).
+ */
+exports.deleteInvoice = async (req, res) => {
+  if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
+
+  const { data: existing } = await supabase
+    .from('fee_invoices')
+    .select('amount_paid')
+    .eq('id', req.params.id)
+    .eq('school_id', req.schoolId)
+    .single();
+  if (!existing) return res.status(404).json({ error: 'Invoice not found.' });
+  if (Number(existing.amount_paid || 0) > 0) {
+    return res.status(400).json({ error: 'Cannot delete an invoice that already has payments recorded.' });
+  }
+
+  const { error, count } = await supabase
+    .from('fee_invoices')
+    .delete({ count: 'exact' })
+    .eq('id', req.params.id)
+    .eq('school_id', req.schoolId);
+  if (error) return res.status(400).json({ error: error.message });
+  if (count === 0) return res.status(404).json({ error: 'Invoice not found.' });
+  res.json({ success: true });
+};
+
 /* ─ Payments ─ */
 exports.listPayments = async (req, res) => {
   const { limit = 50 } = req.query;

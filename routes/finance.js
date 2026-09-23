@@ -15,6 +15,8 @@ router.put('/fee-types/:id',     admin,  ctrl.updateFeeType);
 // Invoices
 router.get('/invoices',          viewer, ctrl.listInvoices);
 router.post('/invoices',         admin,  ctrl.createInvoice);
+router.put('/invoices/:id',      admin,  ctrl.updateInvoice);
+router.delete('/invoices/:id',   admin,  ctrl.deleteInvoice);
 router.post('/invoices/:id/pay', viewer, ctrl.payInvoice);
 router.get('/invoice/:id/pdf',   viewer, ctrl.generateInvoicePDF);
 
