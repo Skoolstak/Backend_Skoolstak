@@ -11,6 +11,7 @@ const viewer = requireRole('school_admin','student','parent');
 router.get('/fee-types',         admin,  ctrl.listFeeTypes);
 router.post('/fee-types',        admin,  ctrl.createFeeType);
 router.put('/fee-types/:id',     admin,  ctrl.updateFeeType);
+router.delete('/fee-types/:id',  admin,  ctrl.deleteFeeType);
 
 // Invoices
 router.get('/invoices',          viewer, ctrl.listInvoices);

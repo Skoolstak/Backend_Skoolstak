@@ -38,6 +38,32 @@ exports.updateFeeType = async (req, res) => {
   res.json({ fee_type: data });
 };
 
+/**
+ * DELETE /api/finance/fee-types/:id
+ * Blocked if any invoice already references this fee type, since deleting
+ * it out from under existing invoices would break their fee_type_id FK
+ * (and orphan the display name shown on those invoices).
+ */
+exports.deleteFeeType = async (req, res) => {
+  if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
+  const { count } = await supabase
+    .from('fee_invoices')
+    .select('id', { count: 'exact', head: true })
+    .eq('fee_type_id', req.params.id)
+    .eq('school_id', req.schoolId);
+  if (count > 0) {
+    return res.status(400).json({ error: 'Cannot delete a fee type that has invoices. Remove those invoices first.' });
+  }
+  const { error, count: deleted } = await supabase
+    .from('fee_types')
+    .delete({ count: 'exact' })
+    .eq('id', req.params.id)
+    .eq('school_id', req.schoolId);
+  if (error) return res.status(400).json({ error: error.message });
+  if (deleted === 0) return res.status(404).json({ error: 'Fee type not found.' });
+  res.json({ success: true });
+};
+
 /* ─ Invoices ─ */
 exports.listInvoices = async (req, res) => {
   const { student_id, term, year, limit = 100 } = req.query;
