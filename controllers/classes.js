@@ -108,7 +108,7 @@ exports.listStudents = async (req, res) => {
  */
 exports.importExcel = async (req, res) => {
   try {
-    const XLSX = require('xlsx');
+    const { parseSheetRows } = require('../utils/excel');
     const { file } = req.body;
 
     if (!file) {
@@ -128,10 +128,7 @@ exports.importExcel = async (req, res) => {
     }
 
     // Parse Excel
-    const workbook = XLSX.read(buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    const data = XLSX.utils.sheet_to_json(worksheet);
+    const data = parseSheetRows(buffer);
 
     if (!data || data.length === 0) {
       return res.status(400).json({ error: 'Excel file is empty.' });
@@ -154,7 +151,7 @@ exports.importExcel = async (req, res) => {
           school_id: req.schoolId,
           name: String(row.name).trim(),
           level: row.level ? String(row.level).trim() : null,
-          capacity: row.capacity ? parseInt(row.capacity) : null,
+          capacity: Number.isFinite(parseInt(row.capacity, 10)) ? parseInt(row.capacity, 10) : null,
           teacher_id: null,
         };
 

@@ -232,7 +232,7 @@ exports.bulkRemove = async (req, res) => {
  */
 exports.importExcel = async (req, res) => {
   try {
-    const XLSX = require('xlsx');
+    const { parseSheetRows } = require('../utils/excel');
     const { file } = req.body;
 
     if (!file) {
@@ -252,10 +252,7 @@ exports.importExcel = async (req, res) => {
     }
 
     // Parse Excel
-    const workbook = XLSX.read(buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    const data = XLSX.utils.sheet_to_json(worksheet);
+    const data = parseSheetRows(buffer);
 
     if (!data || data.length === 0) {
       return res.status(400).json({ error: 'Excel file is empty.' });
@@ -274,14 +271,15 @@ exports.importExcel = async (req, res) => {
           continue;
         }
 
-        const email = String(row.email).trim();
+        const email = String(row.email).trim().toLowerCase();
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
           results.failed++;
           results.errors.push({ row: rowNum, error: 'Invalid email address' });
           continue;
         }
 
-        const role = row.role && ALLOWED_ROLES.includes(row.role) ? row.role : 'teacher';
+        const roleValue = row.role ? String(row.role).trim().toLowerCase() : '';
+        const role = ALLOWED_ROLES.includes(roleValue) ? roleValue : 'teacher';
 
         // 1. Create the account with a temporary password until the generated staff ID is available.
         const { data: authData, error: authError } = await supabase.auth.admin.createUser({

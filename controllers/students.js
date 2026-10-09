@@ -293,7 +293,7 @@ exports.bulkRemove = async (req, res) => {
  */
 exports.importExcel = async (req, res) => {
   try {
-    const XLSX = require('xlsx');
+    const { parseSheetRows, toDateString } = require('../utils/excel');
     const { file, class_id } = req.body;
 
     if (!file) {
@@ -313,16 +313,23 @@ exports.importExcel = async (req, res) => {
     }
 
     // Parse Excel
-    const workbook = XLSX.read(buffer, { type: 'buffer' });
-    const sheetName = workbook.SheetNames[0];
-    const worksheet = workbook.Sheets[sheetName];
-    const data = XLSX.utils.sheet_to_json(worksheet);
+    const data = parseSheetRows(buffer);
 
     if (!data || data.length === 0) {
       return res.status(400).json({ error: 'Excel file is empty.' });
     }
 
     const results = { success: 0, failed: 0, errors: [] };
+
+    if (class_id) {
+      const { data: cls } = await supabase
+        .from('classes')
+        .select('id')
+        .eq('id', String(class_id))
+        .eq('school_id', req.schoolId)
+        .maybeSingle();
+      if (!cls) return res.status(400).json({ error: 'Selected class not found.' });
+    }
 
     // Expected columns: first_name, last_name, dob (optional)
     for (let i = 0; i < data.length; i++) {
@@ -339,7 +346,7 @@ exports.importExcel = async (req, res) => {
           school_id: req.schoolId,
           first_name: String(row.first_name).trim(),
           last_name: String(row.last_name).trim(),
-          dob: row.dob ? new Date(row.dob).toISOString().split('T')[0] : null,
+          dob: toDateString(row.dob),
           class_id: class_id || null,
           status: 'active',
         };
