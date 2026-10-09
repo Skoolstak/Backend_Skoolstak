@@ -139,6 +139,23 @@ exports.importExcel = async (req, res) => {
 
     const results = { success: 0, failed: 0, errors: [] };
 
+    // class_id in the sheet may be a class UUID or the class name (e.g. "JHS 1"),
+    // resolved against this school's classes only.
+    const { data: schoolClasses, error: classesError } = await supabase
+      .from('classes')
+      .select('id, name')
+      .eq('school_id', req.schoolId);
+    if (classesError) return res.status(500).json({ error: classesError.message });
+
+    const classById = new Map(schoolClasses.map((c) => [c.id, c.id]));
+    const classByName = new Map(
+      schoolClasses.map((c) => [String(c.name).trim().toLowerCase(), c.id])
+    );
+    const resolveClassId = (value) => {
+      const key = String(value).trim();
+      return classById.get(key) || classByName.get(key.toLowerCase()) || null;
+    };
+
     // Process each row
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
@@ -151,11 +168,21 @@ exports.importExcel = async (req, res) => {
         }
 
         // Use class_id from request body if provided, otherwise from row
-        const subjectClassId = class_id || row.class_id;
-        
-        if (!subjectClassId) {
+        const rawClass = class_id || row.class_id;
+
+        if (rawClass === undefined || rawClass === null || String(rawClass).trim() === '') {
           results.failed++;
           results.errors.push({ row: rowNum, error: 'Missing class_id' });
+          continue;
+        }
+
+        const subjectClassId = resolveClassId(rawClass);
+        if (!subjectClassId) {
+          results.failed++;
+          results.errors.push({
+            row: rowNum,
+            error: `Class "${rawClass}" not found. Use the class UUID or the exact class name.`,
+          });
           continue;
         }
 
