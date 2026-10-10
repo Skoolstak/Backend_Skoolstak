@@ -17,6 +17,7 @@ router.post('/salaries/:id/adjustments',         admin, payroll.addAdjustment);
 router.put('/salaries/adjustments/:adjId',       admin, payroll.updateAdjustmentEnd);
 router.delete('/salaries/adjustments/:adjId',    admin, payroll.deleteAdjustment);
 router.get('/salary-notice/:id/pdf',             admin, payroll.generateSalaryNoticePDF);
+router.get('/payroll-list/pdf',                  admin, payroll.generatePayrollListPDF);
 
 // Fee types
 router.get('/fee-types',         admin,  ctrl.listFeeTypes);
@@ -40,10 +41,12 @@ router.get('/receipt/:paymentId/pdf', viewer, ctrl.generateReceiptPDF);
 // Cash Flow
 router.get('/cash-flow',         admin,  ctrl.listCashFlow);
 router.post('/cash-flow',        admin,  ctrl.createCashFlow);
+router.put('/cash-flow/:id',     admin,  ctrl.updateCashFlow);
 router.delete('/cash-flow/:id',  admin,  ctrl.deleteCashFlow);
 // Aliases without hyphen — older client builds call /cashflow
 router.get('/cashflow',          admin,  ctrl.listCashFlow);
 router.post('/cashflow',         admin,  ctrl.createCashFlow);
+router.put('/cashflow/:id',      admin,  ctrl.updateCashFlow);
 router.delete('/cashflow/:id',   admin,  ctrl.deleteCashFlow);
 
 // Paystack initiation

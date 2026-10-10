@@ -300,6 +300,33 @@ exports.createCashFlow = async (req, res) => {
   res.status(201).json({ entry: data });
 };
 
+exports.updateCashFlow = async (req, res) => {
+  if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
+  const fields = pickFields(req.body, CASHFLOW_FIELDS);
+  if (Object.keys(fields).length === 0) return res.status(400).json({ error: 'Nothing to update.' });
+  if (fields.type !== undefined && !CASHFLOW_TYPES.includes(fields.type)) {
+    return res.status(400).json({ error: `type must be one of: ${CASHFLOW_TYPES.join(', ')}.` });
+  }
+  if (fields.amount !== undefined && (isNaN(parseFloat(fields.amount)) || parseFloat(fields.amount) <= 0)) {
+    return res.status(400).json({ error: 'amount must be a number greater than 0.' });
+  }
+  if ('category' in fields && (fields.category === null || !String(fields.category).trim())) {
+    return res.status(400).json({ error: 'category cannot be empty.' });
+  }
+  if ('date' in fields && !fields.date) {
+    return res.status(400).json({ error: 'date cannot be empty.' });
+  }
+  const { data, error } = await supabase.from('cash_flow')
+    .update(fields)
+    .eq('id', req.params.id)
+    .eq('school_id', req.schoolId)
+    .select()
+    .maybeSingle();
+  if (error) return res.status(400).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Entry not found.' });
+  res.json({ entry: data });
+};
+
 exports.deleteCashFlow = async (req, res) => {
   if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
   const { error } = await supabase.from('cash_flow').delete().eq('id', req.params.id).eq('school_id', req.schoolId);
