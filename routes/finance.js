@@ -1,11 +1,17 @@
 const express = require('express');
 const router  = express.Router();
 const ctrl    = require('../controllers/finance');
+const salaries = require('../controllers/salaries');
 const { authMiddleware, requireRole } = require('../middleware/auth');
 
 router.use(authMiddleware);
 const admin  = requireRole('school_admin');
 const viewer = requireRole('school_admin','student','parent');
+
+// Staff salaries and printable salary notices (admin only)
+router.get('/salaries',                 admin, salaries.listSalaries);
+router.put('/salaries/:id',             admin, salaries.setSalary);
+router.get('/salary-notice/:id/pdf',    admin, salaries.generateSalaryNoticePDF);
 
 // Fee types
 router.get('/fee-types',         admin,  ctrl.listFeeTypes);
