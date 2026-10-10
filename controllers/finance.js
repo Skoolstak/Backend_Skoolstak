@@ -70,7 +70,7 @@ exports.listInvoices = async (req, res) => {
 
   let query = supabase
     .from('fee_invoices')
-    .select('*, fee_types(name), students(first_name,last_name)')
+    .select('*, fee_types(name), students(first_name,last_name,classes(name))')
     .eq('school_id', req.schoolId)
     .order('created_at', { ascending: false })
     .limit(capLimit(limit, 100, 500));
@@ -86,6 +86,7 @@ exports.listInvoices = async (req, res) => {
     ...inv,
     fee_type_name: inv.fee_types?.name,
     student_name:  inv.students ? `${inv.students.first_name} ${inv.students.last_name}` : null,
+    class_name:    inv.students?.classes?.name || null,
     balance: Number(inv.amount) - Number(inv.amount_paid || 0),
   }));
 
