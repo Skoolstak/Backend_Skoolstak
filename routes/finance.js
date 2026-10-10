@@ -1,17 +1,22 @@
 const express = require('express');
 const router  = express.Router();
 const ctrl    = require('../controllers/finance');
-const salaries = require('../controllers/salaries');
+const payroll = require('../controllers/payroll');
 const { authMiddleware, requireRole } = require('../middleware/auth');
 
 router.use(authMiddleware);
 const admin  = requireRole('school_admin');
 const viewer = requireRole('school_admin','student','parent');
 
-// Staff salaries and printable salary notices (admin only)
-router.get('/salaries',                 admin, salaries.listSalaries);
-router.put('/salaries/:id',             admin, salaries.setSalary);
-router.get('/salary-notice/:id/pdf',    admin, salaries.generateSalaryNoticePDF);
+// Staff pay: salary history, allowances / bonuses / deductions, printable salary notices (admin only)
+router.get('/salaries',                          admin, payroll.listSalaries);
+router.get('/salaries/:id',                      admin, payroll.getStaffPay);
+router.post('/salaries/:id/history',             admin, payroll.addSalaryRevision);
+router.delete('/salaries/history/:historyId',    admin, payroll.deleteSalaryRevision);
+router.post('/salaries/:id/adjustments',         admin, payroll.addAdjustment);
+router.put('/salaries/adjustments/:adjId',       admin, payroll.updateAdjustmentEnd);
+router.delete('/salaries/adjustments/:adjId',    admin, payroll.deleteAdjustment);
+router.get('/salary-notice/:id/pdf',             admin, payroll.generateSalaryNoticePDF);
 
 // Fee types
 router.get('/fee-types',         admin,  ctrl.listFeeTypes);
