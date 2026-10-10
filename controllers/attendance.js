@@ -1,6 +1,7 @@
 const supabase = require('../supabaseClient');
 const { isValidUUID, capLimit, isValidDate, isSafeText } = require('../middleware/sanitize');
 const { allowedStudentIds } = require('../utils/access');
+const { termOf } = require('../utils/term');
 
 const VALID_STATUSES = ['present', 'absent', 'late'];
 
@@ -57,7 +58,7 @@ exports.list = async (req, res) => {
 };
 
 exports.save = async (req, res) => {
-  const { class_id, date, records, term = 1, academic_year } = req.body;
+  const { class_id, date, records } = req.body;
 
   if (!class_id || !isValidUUID(class_id)) {
     return res.status(400).json({ error: 'A valid class_id is required.' });
@@ -77,7 +78,8 @@ exports.save = async (req, res) => {
     return res.status(400).json({ error: 'Cannot submit more than 500 attendance records at once.' });
   }
 
-  const year = academic_year || new Date().getFullYear();
+  // Term and academic year always follow the attendance date (Ghana calendar), whatever the client sent
+  const { term: dateTerm, year: dateYear } = termOf(date);
 
   // Whitelist each record: only accept student_id, status, remark
   const rows = [];
@@ -96,15 +98,15 @@ exports.save = async (req, res) => {
       student_id:    r.student_id,
       date,
       status:        r.status,
-      term,
-      academic_year: year,
+      term:          dateTerm,
+      academic_year: dateYear,
       remark:        typeof r.remark === 'string' ? r.remark.slice(0, 255) : null,
     });
   }
 
   const { error } = await supabase
     .from('attendance')
-    .upsert(rows, { onConflict: 'school_id,class_id,student_id,date' });
+    .upsert(rows, { onConflict: 'school_id,student_id,date' });
 
   if (error) return res.status(400).json({ error: error.message });
   res.json({ success: true, count: rows.length });

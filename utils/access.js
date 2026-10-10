@@ -51,4 +51,24 @@ async function teacherClassIds(req) {
   return req._teacherClassIds;
 }
 
-module.exports = { allowedStudentIds, teacherClassIds };
+/**
+ * The parent's children, oldest record first. `req.query.student_id` picks one of them;
+ * an id that isn't theirs is ignored, so a parent can never select someone else's child.
+ */
+async function parentChildren(req, select = 'id, class_id, first_name, last_name') {
+  const { data } = await supabase
+    .from('students')
+    .select(select)
+    .eq('school_id', req.schoolId)
+    .eq('parent_id', req.profile?.id)
+    .order('created_at', { ascending: true });
+  return data || [];
+}
+
+async function pickChild(req, select) {
+  const children = await parentChildren(req, select);
+  const wanted = req.query?.student_id;
+  return children.find((c) => c.id === wanted) || children[0] || null;
+}
+
+module.exports = { allowedStudentIds, teacherClassIds, parentChildren, pickChild };

@@ -5,6 +5,7 @@ const { authMiddleware, requireRole } = require('../middleware/auth');
 
 router.use(authMiddleware, requireRole('parent'));
 
+router.get('/children',   ctrl.children);
 router.get('/attendance', ctrl.attendance);
 router.get('/fees',       ctrl.fees);
 

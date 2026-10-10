@@ -1,5 +1,5 @@
 const supabase = require('../supabaseClient');
-const { teacherClassIds } = require('../utils/access');
+const { teacherClassIds, pickChild } = require('../utils/access');
 
 /* ─ Admin summary ─ */
 exports.adminSummary = async (req, res) => {
@@ -150,9 +150,8 @@ exports.studentSummary = async (req, res) => {
 /* ─ Parent summary ─ */
 exports.parentSummary = async (req, res) => {
   const schoolId  = req.schoolId;
-  const profileId = req.profile?.id;
 
-  const { data: student } = await supabase.from('students').select('id, first_name, last_name, class_id, classes(name)').eq('school_id', schoolId).eq('parent_id', profileId).single();
+  const student = await pickChild(req, 'id, first_name, last_name, class_id, classes(name)');
   if (!student) return res.json({ child_name: 'your child' });
 
   const [attData, invoicesRes, loansCount] = await Promise.all([

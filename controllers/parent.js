@@ -1,9 +1,12 @@
 const supabase = require('../supabaseClient');
+const { pickChild, parentChildren } = require('../utils/access');
 
-async function getChild(req) {
-  const { data } = await supabase.from('students').select('id, class_id, first_name, last_name').eq('school_id', req.schoolId).eq('parent_id', req.profile?.id).single();
-  return data;
-}
+const getChild = (req) => pickChild(req);
+
+exports.children = async (req, res) => {
+  const list = await parentChildren(req, 'id, first_name, last_name, classes(name)');
+  res.json({ children: list.map((c) => ({ id: c.id, name: `${c.first_name} ${c.last_name}`, class_name: c.classes?.name || null })) });
+};
 
 exports.attendance = async (req, res) => {
   const child = await getChild(req);

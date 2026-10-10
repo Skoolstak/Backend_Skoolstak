@@ -1,4 +1,5 @@
 const supabase = require('../supabaseClient');
+const { termOf } = require('../utils/term');
 
 async function getStudentId(req) {
   const { data } = await supabase.from('students').select('id, class_id, first_name, last_name').eq('school_id', req.schoolId).eq('user_profile_id', req.profile?.id).single();
@@ -107,9 +108,8 @@ exports.dashboardSummary = async (req, res) => {
   if (!student) return res.json({});
 
   try {
-    // Attendance is stored by the month-based term and calendar year (see teacher Attendance page)
-    const currentYear = new Date().getFullYear();
-    const currentTerm = Math.ceil((new Date().getMonth() + 1) / 4);
+    // Attendance is stored under the Ghana-calendar term of its date (see utils/term.js)
+    const { term: currentTerm, year: currentYear } = termOf();
 
     // Grades come from the most recent term that has any. They are stored as "Term 1" / "2026/2027",
     // so a computed term number would never match them and the dashboard would always be empty.
@@ -201,8 +201,9 @@ exports.attendanceSummary = async (req, res) => {
   if (!student) return res.json({});
 
   const { term, year } = req.query;
-  const currentYear = year || new Date().getFullYear();
-  const currentTerm = term || Math.ceil((new Date().getMonth() + 1) / 4);
+  const cur = termOf();
+  const currentYear = year || cur.year;
+  const currentTerm = term || cur.term;
 
   try {
     const { data: records } = await supabase
@@ -243,8 +244,9 @@ exports.assignments = async (req, res) => {
   if (!student) return res.json({ assignments: [] });
 
   const { term, year } = req.query;
-  const currentYear = year || new Date().getFullYear();
-  const currentTerm = term || Math.ceil((new Date().getMonth() + 1) / 4);
+  const cur = termOf();
+  const currentYear = year || cur.year;
+  const currentTerm = term || cur.term;
 
   try {
     const { data, error } = await supabase

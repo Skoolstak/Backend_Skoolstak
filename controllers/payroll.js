@@ -91,6 +91,11 @@ async function loadMonthRows(schoolId, month) {
   const historyBy = group(history);
   const adjustmentsBy = group(adjustments);
 
+  // Bank details are optional and live in their own table; the salary list still works if it isn't set up yet
+  const { data: bankRows } = await supabase
+    .from('staff_bank_details').select('staff_id, bank_name, account_number').eq('school_id', schoolId);
+  const bankBy = new Map((bankRows || []).map((b) => [b.staff_id, b]));
+
   const rows = (staff || []).map((s) => {
     const pay = calcPay(historyBy.get(s.id) || [], adjustmentsBy.get(s.id) || [], month);
     return {
@@ -100,6 +105,8 @@ async function loadMonthRows(schoolId, month) {
       last_name:        s.user_profiles?.last_name || '',
       role:             s.user_profiles?.role || '',
       designation:      s.designation || '',
+      bank_name:        bankBy.get(s.id)?.bank_name || '',
+      account_number:   bankBy.get(s.id)?.account_number || '',
       basic:            pay.basic,
       allowances_total: pay.totalEarnings,
       deductions_total: pay.totalDeductions,
@@ -146,23 +153,25 @@ exports.generatePayrollListPDF = async (req, res) => {
     const totalNet = r2(people.reduce((s, p) => s + p.net, 0));
     const period = monthLabel(month);
 
-    const doc = new PDFDocument({ margin: 50, size: 'A4', bufferPages: true });
+    const doc = new PDFDocument({ margin: 50, size: 'A4', layout: 'landscape', bufferPages: true });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="payroll-list-${month}.pdf"`);
     doc.pipe(res);
 
     const left = 50;
-    const right = 545;
-    const cols = { no: 50, id: 80, name: 172, basic: 345, net: 445 };
+    const right = 792;
+    const cols = { no: 50, id: 78, name: 160, bank: 335, acct: 450, basic: 575, net: 680 };
     let y;
 
     const header = () => {
       doc.fontSize(10).font('Helvetica-Bold');
       doc.text('No.', cols.no, y, { width: 26 });
-      doc.text('Staff ID', cols.id, y, { width: 90 });
-      doc.text('Name', cols.name, y, { width: 165 });
-      doc.text('Basic Salary (GHS)', cols.basic, y, { width: 95, align: 'right' });
-      doc.text('Net Pay (GHS)', cols.net, y, { width: 100, align: 'right' });
+      doc.text('Staff ID', cols.id, y, { width: 80 });
+      doc.text('Name', cols.name, y, { width: 170 });
+      doc.text('Bank', cols.bank, y, { width: 110 });
+      doc.text('Account Number', cols.acct, y, { width: 120 });
+      doc.text('Basic (GHS)', cols.basic, y, { width: 95, align: 'right' });
+      doc.text('Net Pay (GHS)', cols.net, y, { width: 112, align: 'right' });
       doc.font('Helvetica');
       y += 16;
       doc.moveTo(left, y).lineTo(right, y).stroke();
@@ -177,36 +186,38 @@ exports.generatePayrollListPDF = async (req, res) => {
     doc.fontSize(10);
     doc.text(`Pay period: ${period}`, left, y);
     doc.text(`Date issued: ${formatDate(new Date())}`, left, y + 15);
-    doc.text(`Number of staff: ${people.length}`, 330, y, { width: right - 330, align: 'right' });
+    doc.text(`Number of staff: ${people.length}`, 500, y, { width: right - 500, align: 'right' });
     y += 42;
     header();
 
     people.forEach((p, i) => {
-      if (y > 735) { doc.addPage(); y = 60; header(); }
+      if (y > 505) { doc.addPage(); y = 60; header(); }
       doc.fontSize(10);
       doc.text(String(i + 1), cols.no, y, { width: 26 });
-      doc.text(p.staff_id || '—', cols.id, y, { width: 90, lineBreak: false });
-      doc.text(`${p.first_name} ${p.last_name}`.trim(), cols.name, y, { width: 165, height: 12, ellipsis: true });
+      doc.text(p.staff_id || '—', cols.id, y, { width: 80, lineBreak: false });
+      doc.text(`${p.first_name} ${p.last_name}`.trim(), cols.name, y, { width: 170, height: 12, ellipsis: true });
+      doc.text(p.bank_name || '—', cols.bank, y, { width: 110, height: 12, ellipsis: true });
+      doc.text(p.account_number || '—', cols.acct, y, { width: 120, height: 12, ellipsis: true });
       doc.text(money(p.basic), cols.basic, y, { width: 95, align: 'right' });
-      doc.text(money(p.net), cols.net, y, { width: 100, align: 'right' });
+      doc.text(money(p.net), cols.net, y, { width: 112, align: 'right' });
       y += 18;
     });
 
-    if (y > 700) { doc.addPage(); y = 60; }
+    if (y > 470) { doc.addPage(); y = 60; }
     doc.moveTo(left, y).lineTo(right, y).stroke();
     y += 8;
     doc.fontSize(10).font('Helvetica-Bold');
-    doc.text(`TOTAL (${people.length} staff)`, cols.no, y, { width: 290 });
+    doc.text(`TOTAL (${people.length} staff)`, cols.no, y, { width: 400 });
     doc.text(money(totalBasic), cols.basic, y, { width: 95, align: 'right' });
-    doc.text(money(totalNet), cols.net, y, { width: 100, align: 'right' });
+    doc.text(money(totalNet), cols.net, y, { width: 112, align: 'right' });
     doc.font('Helvetica');
     y += 22;
     doc.fontSize(8).fillColor('#555555');
     doc.text('Net pay = basic salary + allowances and bonuses - deductions for the month.', left, y, { width: right - left });
     doc.fillColor('#000000');
-    y += 36;
+    y += 26;
 
-    if (y > 720) { doc.addPage(); y = 60; }
+    if (y > 520) { doc.addPage(); y = 60; }
     doc.moveTo(left, y).lineTo(left + 200, y).stroke();
     doc.moveTo(right - 200, y).lineTo(right, y).stroke();
     doc.fontSize(9).text('Prepared by', left, y + 6);
@@ -216,7 +227,7 @@ exports.generatePayrollListPDF = async (req, res) => {
     const range = doc.bufferedPageRange();
     for (let i = 0; i < range.count; i++) {
       doc.switchToPage(range.start + i);
-      doc.fontSize(8).text(`Page ${i + 1} of ${range.count}`, left, 770, { width: right - left, align: 'center', lineBreak: false });
+      doc.fontSize(8).text(`Page ${i + 1} of ${range.count}`, left, 535, { width: right - left, align: 'center', lineBreak: false });
     }
 
     doc.end();
@@ -248,12 +259,52 @@ exports.getStaffPay = async (req, res) => {
     .select('id, kind, label, amount, start_month, end_month')
     .eq('staff_id', id).eq('school_id', req.schoolId);
   if (adjErr) return fail(res, adjErr);
+  const { data: bank } = await supabase
+    .from('staff_bank_details').select('bank_name, account_number')
+    .eq('staff_id', id).eq('school_id', req.schoolId).maybeSingle();
 
   res.json({
+    bank: { bank_name: bank?.bank_name || '', account_number: bank?.account_number || '' },
     history:     (history || []).map((h) => ({ ...h, amount: Number(h.amount) })).sort((a, b) => b.effective_month.localeCompare(a.effective_month)),
     adjustments: (adjustments || []).map((a) => ({ ...a, amount: Number(a.amount) })).sort((a, b) => b.start_month.localeCompare(a.start_month)),
   });
 };
+
+/**
+ * PUT /api/finance/salaries/:id/bank   Body: { bank_name, account_number }
+ * Saves where this person's salary is paid. Sending both empty removes the details.
+ */
+exports.setBankDetails = async (req, res) => {
+  const { id } = req.params;
+  if (!isValidUUID(id)) return res.status(400).json({ error: 'Invalid ID format.' });
+  if (!(await findStaff(req.schoolId, id))) return res.status(404).json({ error: 'Staff member not found.' });
+
+  const bank_name = String(req.body.bank_name ?? '').trim();
+  const account_number = String(req.body.account_number ?? '').trim();
+  if (bank_name.length > 80) return res.status(400).json({ error: 'Bank name is too long.' });
+  if (account_number && !/^[0-9][0-9 -]{3,39}$/.test(account_number)) {
+    return res.status(400).json({ error: 'Account number should contain digits only (4 to 40 characters).' });
+  }
+
+  if (!bank_name && !account_number) {
+    const { error } = await supabase.from('staff_bank_details').delete().eq('staff_id', id).eq('school_id', req.schoolId);
+    if (error) return failBank(res, error);
+    return res.json({ bank: { bank_name: '', account_number: '' } });
+  }
+
+  const { error } = await supabase.from('staff_bank_details').upsert(
+    { school_id: req.schoolId, staff_id: id, bank_name: bank_name || null, account_number: account_number || null, updated_at: new Date().toISOString() },
+    { onConflict: 'staff_id' },
+  );
+  if (error) return failBank(res, error);
+  res.json({ bank: { bank_name, account_number } });
+};
+
+const failBank = (res, err) => (
+  err.code === '42P01' || err.code === 'PGRST205' || /staff_bank_details/.test(err.message || '')
+    ? res.status(503).json({ error: 'Bank details are not set up yet. Run migration 016_staff_bank_details.sql in Supabase, then try again.' })
+    : res.status(500).json({ error: err.message })
+);
 
 /**
  * POST /api/finance/salaries/:id/history   Body: { amount, effective_month, reason? }

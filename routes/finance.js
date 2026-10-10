@@ -12,6 +12,7 @@ const viewer = requireRole('school_admin','student','parent');
 router.get('/salaries',                          admin, payroll.listSalaries);
 router.get('/salaries/:id',                      admin, payroll.getStaffPay);
 router.post('/salaries/:id/history',             admin, payroll.addSalaryRevision);
+router.put('/salaries/:id/bank',                 admin, payroll.setBankDetails);
 router.delete('/salaries/history/:historyId',    admin, payroll.deleteSalaryRevision);
 router.post('/salaries/:id/adjustments',         admin, payroll.addAdjustment);
 router.put('/salaries/adjustments/:adjId',       admin, payroll.updateAdjustmentEnd);

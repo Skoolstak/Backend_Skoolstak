@@ -1,5 +1,6 @@
 const supabase = require('../supabaseClient');
 const { teacherClassIds } = require('../utils/access');
+const { termOf } = require('../utils/term');
 
 // Counts active students per class for the given class ids
 async function activeStudentCounts(schoolId, classIds) {
@@ -61,8 +62,7 @@ exports.classStats = async (req, res) => {
       return res.status(403).json({ error: 'Access denied or class not found' });
     }
 
-    const currentYear = new Date().getFullYear();
-    const currentTerm = Math.ceil((new Date().getMonth() + 1) / 4);
+    const { term: currentTerm, year: currentYear } = termOf();
 
     // Active students in the class
     const { count: total_students } = await supabase
