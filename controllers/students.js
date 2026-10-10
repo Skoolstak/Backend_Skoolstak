@@ -339,7 +339,12 @@ exports.importExcel = async (req, res) => {
       .eq('school_id', req.schoolId);
     if (classesError) return res.status(500).json({ error: classesError.message });
     const classById = new Set(schoolClasses.map((c) => c.id));
-    const classByName = new Map(schoolClasses.map((c) => [normName(c.name), c.id]));
+    // Two classes with the same name would make placement a guess, so mark them ambiguous.
+    const classByName = new Map();
+    for (const c of schoolClasses) {
+      const key = normName(c.name);
+      classByName.set(key, classByName.has(key) ? 'ambiguous' : c.id);
+    }
 
     const STUDENT_STATUSES = ['active', 'graduated', 'withdrawn'];
 
@@ -370,9 +375,14 @@ exports.importExcel = async (req, res) => {
         if (rawClass !== undefined) {
           const key = String(rawClass).trim();
           rowClassId = classById.has(key) ? key : classByName.get(normName(key));
+          if (rowClassId === 'ambiguous') {
+            results.failed++;
+            results.errors.push({ row: rowNum, error: `More than one class is named "${rawClass}". Rename or delete the duplicate in Classes, then import again.` });
+            continue;
+          }
           if (!rowClassId) {
             results.failed++;
-            results.errors.push({ row: rowNum, error: `Class "${rawClass}" not found. Use the exact class name (e.g. Primary 1).` });
+            results.errors.push({ row: rowNum, error: `Class "${rawClass}" not found. Create it in Classes first (import Classes before Students) and use the exact class name.` });
             continue;
           }
         }
