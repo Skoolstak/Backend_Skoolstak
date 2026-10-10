@@ -1,4 +1,5 @@
 const supabase = require('../supabaseClient');
+const { teacherClassIds } = require('../utils/access');
 
 /* ─ Admin summary ─ */
 exports.adminSummary = async (req, res) => {
@@ -57,40 +58,48 @@ exports.monthlyRevenue = async (req, res) => {
 /* ─ Teacher summary ─ */
 exports.teacherSummary = async (req, res) => {
   const schoolId        = req.schoolId;
-  const teacherProfileId = req.profile?.id;  // classes.teacher_id references user_profiles.id
+  const teacherProfileId = req.profile?.id;
   const dayNames   = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
   const todayName  = dayNames[new Date().getDay()];
   const today      = new Date().toISOString().split('T')[0];
 
-  // Classes assigned to this teacher
-  const { data: classes } = await supabase.from('classes').select('id, name').eq('school_id', schoolId).eq('teacher_id', teacherProfileId);
-  const classIds = (classes || []).map(c => c.id);
+  // Classes this teacher works with: class teacher, or assigned a subject / timetable slot there
+  const classIds = await teacherClassIds(req);
+  let classes = [];
+  if (classIds.length > 0) {
+    const { data } = await supabase.from('classes').select('id, name').eq('school_id', schoolId).in('id', classIds).order('name');
+    classes = data || [];
+  }
 
   let student_count = 0;
   if (classIds.length > 0) {
-    const { count } = await supabase.from('students').select('*', { count:'exact', head:true }).in('class_id', classIds).eq('status','active');
+    const { count } = await supabase.from('students').select('*', { count:'exact', head:true }).eq('school_id', schoolId).in('class_id', classIds).eq('status','active');
     student_count = count || 0;
   }
 
-  // Today's slots for this teacher
-  const { data: today_slots } = await supabase.from('timetable_slots').select('subject, classes(name)')
+  // Today's slots for this teacher, in period order
+  const { data: today_slots } = await supabase.from('timetable_slots').select('subject, period, classes(name)')
     .eq('school_id', schoolId)
     .eq('teacher_id', teacherProfileId)
-    .eq('day', todayName);
+    .eq('day', todayName)
+    .order('period');
 
-  const slots = (today_slots || []).map(s => ({ ...s, subject_name: s.subject, class_name: s.classes?.name }));
+  const slots = (today_slots || []).map(s => ({ ...s, subject_name: s.subject, class_name: s.classes?.name, classes: undefined }));
 
-  // Attendance done today for each class
-  const pendingAtt = [];
-  for (const cls of (classes || [])) {
-    const { count } = await supabase.from('attendance').select('*', { count:'exact', head:true }).eq('school_id', schoolId).eq('class_id', cls.id).eq('date', today);
-    if (!count) pendingAtt.push(cls);
+  // Classes with no attendance marked yet today (one query for all of them)
+  let pendingAtt = classes;
+  if (classes.length > 0) {
+    const { data: marked } = await supabase.from('attendance').select('class_id')
+      .eq('school_id', schoolId).eq('date', today).in('class_id', classes.map(c => c.id));
+    const markedIds = new Set((marked || []).map(r => r.class_id));
+    pendingAtt = classes.filter(c => !markedIds.has(c.id));
   }
 
   res.json({
-    class_count:         (classes||[]).length,
+    teacher_name:        [req.profile?.first_name, req.profile?.last_name].filter(Boolean).join(' ') || null,
+    class_count:         classes.length,
     student_count,
-    attendance_done_today: pendingAtt.length === 0 && (classes||[]).length > 0,
+    attendance_done_today: pendingAtt.length === 0 && classes.length > 0,
     today_slots:         slots,
     pending_attendance:  pendingAtt,
     next_period:         slots[0]?.subject || '—',

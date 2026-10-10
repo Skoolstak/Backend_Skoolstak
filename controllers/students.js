@@ -2,6 +2,7 @@ const supabase = require('../supabaseClient');
 const crypto = require('crypto');
 const { pickFields, isValidUUID } = require('../middleware/sanitize');
 const { resolvePhotoUrls, extractStoragePath } = require('../utils/photoUrls');
+const { allowedStudentIds } = require('../utils/access');
 
 const STUDENT_FIELDS = ['first_name', 'last_name', 'dob', 'class_id', 'parent_id', 'photo_url', 'status'];
 const VALID_STATUSES = ['active', 'graduated', 'withdrawn'];
@@ -70,6 +71,13 @@ exports.list = async (req, res) => {
   }
   if (class_id) query = query.eq('class_id', class_id);
   if (status)   query = query.eq('status', status);
+
+  // A parent only ever sees their own children
+  const allowed = await allowedStudentIds(req);
+  if (allowed) {
+    if (allowed.length === 0) return res.json({ students: [] });
+    query = query.in('id', allowed);
+  }
 
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });

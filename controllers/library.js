@@ -1,5 +1,6 @@
 const supabase = require('../supabaseClient');
 const { pickFields, isValidUUID } = require('../middleware/sanitize');
+const { allowedStudentIds } = require('../utils/access');
 
 const BOOK_FIELDS      = ['title', 'author', 'book_type', 'quantity', 'available'];
 const VALID_BOOK_TYPES = ['textbook', 'storybook', 'material', 'stationery'];
@@ -127,6 +128,13 @@ exports.listLoans = async (req, res) => {
     .order('issued_at', { ascending: false });
 
   if (student_id) query = query.eq('student_id', student_id);
+
+  // Students see only their own loans and parents only their children's
+  const allowed = await allowedStudentIds(req);
+  if (allowed) {
+    if (allowed.length === 0) return res.json({ loans: [] });
+    query = query.in('student_id', allowed);
+  }
 
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });

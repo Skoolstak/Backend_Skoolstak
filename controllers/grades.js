@@ -1,5 +1,6 @@
 const supabase = require('../supabaseClient');
 const { isValidUUID, isValidScore, isSafeText, MAX_REMARK_LENGTH } = require('../middleware/sanitize');
+const { allowedStudentIds } = require('../utils/access');
 
 // ── WAEC Ghana GES grade computation ─────────────────────────
 function computeWaecGrade(ca, exam) {
@@ -36,6 +37,13 @@ exports.list = async (req, res) => {
   if (term)       query = query.eq('term', term);
   if (year)       query = query.eq('academic_year', year);
 
+  // Students see only their own grades and parents only their children's
+  const allowed = await allowedStudentIds(req);
+  if (allowed) {
+    if (allowed.length === 0) return res.json({ records: [] });
+    query = query.in('student_id', allowed);
+  }
+
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
 
@@ -54,6 +62,11 @@ exports.list = async (req, res) => {
 // GET /api/grades/student/:student_id — full academic history
 exports.studentHistory = async (req, res) => {
   if (!isValidUUID(req.params.student_id)) return res.status(400).json({ error: 'Invalid ID.' });
+
+  const allowed = await allowedStudentIds(req);
+  if (allowed && !allowed.includes(req.params.student_id)) {
+    return res.status(403).json({ error: 'Access denied.' });
+  }
 
   const { data, error } = await supabase
     .from('grade_records')

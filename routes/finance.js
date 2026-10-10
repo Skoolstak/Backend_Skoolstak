@@ -30,7 +30,7 @@ router.get('/invoices',          viewer, ctrl.listInvoices);
 router.post('/invoices',         admin,  ctrl.createInvoice);
 router.put('/invoices/:id',      admin,  ctrl.updateInvoice);
 router.delete('/invoices/:id',   admin,  ctrl.deleteInvoice);
-router.post('/invoices/:id/pay', viewer, ctrl.payInvoice);
+router.post('/invoices/:id/pay', admin,  ctrl.payInvoice);   // admin records a payment; students/parents pay through /initiate-payment
 router.get('/invoice/:id/pdf',   viewer, ctrl.generateInvoicePDF);
 
 // Payments

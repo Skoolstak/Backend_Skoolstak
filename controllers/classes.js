@@ -90,13 +90,13 @@ exports.bulkRemove = async (req, res) => {
 exports.listStudents = async (req, res) => {
   const { data, error } = await supabase
     .from('students')
-    .select('id, first_name, last_name, status')
+    .select('id, student_id, first_name, last_name, dob, status')
     .eq('class_id', req.params.id)
     .eq('school_id', req.schoolId)
     .eq('status', 'active')
     .order('last_name');
   if (error) return res.status(500).json({ error: error.message });
-  res.json({ students: data });
+  res.json({ students: data.map(s => ({ ...s, date_of_birth: s.dob })) });
 };
 
 /**
@@ -168,7 +168,7 @@ exports.importExcel = async (req, res) => {
         const classData = {
           school_id: req.schoolId,
           name: String(className).trim(),
-          level: level !== undefined ? String(level).trim() : null,
+          level: level !== undefined ? String(level).trim() : String(className).trim(), // level is required, so it defaults to the class name
           capacity: Number.isFinite(capacity) ? capacity : null,
           teacher_id: teacherId,
         };

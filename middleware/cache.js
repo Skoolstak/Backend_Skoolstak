@@ -47,10 +47,14 @@ function invalidate(keyOrPrefix) {
  *
  * The cache key is: `${req.schoolId}:${req.path}:${querystring}`
  * So each school gets its own isolated cache entry.
+ *
+ * Responses that differ per signed-in person (a teacher's own classes, a student's own grades)
+ * must use { perUser: true }, which adds the user to the key so people never see each other's data.
  */
-function cacheMiddleware(ttlSeconds = 60) {
+function cacheMiddleware(ttlSeconds = 60, { perUser = false } = {}) {
   return (req, res, next) => {
-    const key = `${req.schoolId || 'anon'}:${req.path}:${JSON.stringify(req.query)}`;
+    const who = perUser ? `u${req.profile?.id || 'anon'}:` : '';
+    const key = `${req.schoolId || 'anon'}:${who}${req.path}:${JSON.stringify(req.query)}`;
     const cached = get(key);
     if (cached) {
       res.setHeader('X-Cache', 'HIT');

@@ -1,5 +1,6 @@
 const supabase = require('../supabaseClient');
 const { isValidUUID, capLimit, isValidDate, isSafeText } = require('../middleware/sanitize');
+const { allowedStudentIds } = require('../utils/access');
 
 const VALID_STATUSES = ['present', 'absent', 'late'];
 
@@ -18,6 +19,13 @@ exports.list = async (req, res) => {
   if (date)       query = query.eq('date', date);
   if (term)       query = query.eq('term', term);
   if (year)       query = query.eq('academic_year', year);
+
+  // Students see only their own attendance and parents only their children's
+  const allowed = await allowedStudentIds(req);
+  if (allowed) {
+    if (allowed.length === 0) return res.json({ records: [] });
+    query = query.in('student_id', allowed);
+  }
 
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });

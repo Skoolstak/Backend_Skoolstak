@@ -42,7 +42,7 @@ async function createClassResolver(schoolId, autoCreated) {
     const name = value.replace(/\s+/g, ' ');
     const { data: created, error: createErr } = await supabase
       .from('classes')
-      .insert({ school_id: schoolId, name, level: null, capacity: null, teacher_id: null })
+      .insert({ school_id: schoolId, name, level: name, capacity: null, teacher_id: null }) // level is required, so it defaults to the class name
       .select('id')
       .single();
     if (createErr) return { error: `Class "${value}" was not found and could not be created: ${createErr.message}` };

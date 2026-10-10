@@ -10,9 +10,10 @@ router.use(authMiddleware);
 router.get('/summary',          requireRole('school_admin'), cacheMiddleware(60),  ctrl.adminSummary);
 // Cache revenue chart 5 minutes — monthly data changes rarely
 router.get('/revenue-chart',    requireRole('school_admin'), cacheMiddleware(300), ctrl.monthlyRevenue);
-// Teacher/student/parent summaries: 30s cache — balance freshness vs DB load
-router.get('/teacher-summary',  requireRole('teacher'),      cacheMiddleware(30),  ctrl.teacherSummary);
-router.get('/student-summary',  requireRole('student'),      cacheMiddleware(30),  ctrl.studentSummary);
-router.get('/parent-summary',   requireRole('parent'),       cacheMiddleware(30),  ctrl.parentSummary);
+// Teacher/student/parent summaries: 30s cache — balance freshness vs DB load.
+// perUser: each person's summary is their own, so it must never be served to someone else.
+router.get('/teacher-summary',  requireRole('teacher'),      cacheMiddleware(30, { perUser: true }),  ctrl.teacherSummary);
+router.get('/student-summary',  requireRole('student'),      cacheMiddleware(30, { perUser: true }),  ctrl.studentSummary);
+router.get('/parent-summary',   requireRole('parent'),       cacheMiddleware(30, { perUser: true }),  ctrl.parentSummary);
 
 module.exports = router;

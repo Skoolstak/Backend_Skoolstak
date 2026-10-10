@@ -1,5 +1,14 @@
 const supabase = require('../supabaseClient');
 const { isValidUUID } = require('../middleware/sanitize');
+const { allowedStudentIds } = require('../utils/access');
+
+// Students and parents only ever see their own (or their children's) reports, and only once published.
+// Resolves who the caller may see first; applyReportScope then narrows a query synchronously
+// (a query builder must never be returned from an async function: it is thenable, so it would run).
+function applyReportScope(query, allowed) {
+  if (!allowed) return query;
+  return query.in('student_id', allowed).eq('is_published', true);
+}
 
 // POST /api/reports/generate
 // Computes and upserts a term_report for a student from their grade_records
@@ -180,6 +189,11 @@ exports.list = async (req, res) => {
   if (class_id)   query = query.eq('class_id', class_id);
   if (term)       query = query.eq('term', term);
   if (year)       query = query.eq('academic_year', year);
+  if (String(req.query.published) === 'true') query = query.eq('is_published', true);
+
+  const allowed = await allowedStudentIds(req);
+  if (allowed && allowed.length === 0) return res.json({ reports: [] });
+  query = applyReportScope(query, allowed);
 
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
@@ -198,11 +212,13 @@ exports.list = async (req, res) => {
 exports.getOne = async (req, res) => {
   if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'Invalid ID.' });
 
-  const { data: report, error: rErr } = await supabase
+  const allowed = await allowedStudentIds(req);
+  if (allowed && allowed.length === 0) return res.status(404).json({ error: 'Report not found.' });
+  const { data: report, error: rErr } = await applyReportScope(supabase
     .from('term_reports')
     .select('*, students(first_name, last_name, dob, photo_url), classes(name)')
     .eq('id', req.params.id)
-    .eq('school_id', req.schoolId)
+    .eq('school_id', req.schoolId), allowed)
     .single();
 
   if (rErr || !report) return res.status(404).json({ error: 'Report not found.' });
@@ -291,11 +307,13 @@ exports.unpublish = async (req, res) => {
 exports.pdf = async (req, res) => {
   if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'Invalid ID.' });
 
-  const { data: report, error: rErr } = await supabase
+  const allowed = await allowedStudentIds(req);
+  if (allowed && allowed.length === 0) return res.status(404).json({ error: 'Report not found.' });
+  const { data: report, error: rErr } = await applyReportScope(supabase
     .from('term_reports')
     .select('*, students(first_name, last_name, dob), classes(name), schools(name, logo_url)')
     .eq('id', req.params.id)
-    .eq('school_id', req.schoolId)
+    .eq('school_id', req.schoolId), allowed)
     .single();
 
   if (rErr || !report) return res.status(404).json({ error: 'Report not found.' });

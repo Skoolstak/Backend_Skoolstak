@@ -1,6 +1,7 @@
 const crypto  = require('crypto');
 const supabase = require('../supabaseClient');
 const { pickFields, isValidUUID, capLimit } = require('../middleware/sanitize');
+const { allowedStudentIds } = require('../utils/access');
 
 const FEE_TYPE_FIELDS    = ['name', 'amount', 'frequency'];
 const INVOICE_FIELDS     = ['student_id', 'fee_type_id', 'term', 'academic_year', 'due_date', 'amount', 'status'];
@@ -78,6 +79,13 @@ exports.listInvoices = async (req, res) => {
   if (student_id) query = query.eq('student_id', student_id);
   if (term)       query = query.eq('term', term);
   if (year)       query = query.eq('academic_year', year);
+
+  // Students see only their own invoices and parents only their children's
+  const allowed = await allowedStudentIds(req);
+  if (allowed) {
+    if (allowed.length === 0) return res.json({ invoices: [], summary: { total_billed: 0, total_paid: 0, total_outstanding: 0, invoice_count: 0 } });
+    query = query.in('student_id', allowed);
+  }
 
   const { data, error } = await query;
   if (error) return res.status(500).json({ error: error.message });
@@ -347,6 +355,12 @@ exports.initiatePaystackPayment = async (req, res) => {
     .single();
   if (!inv) return res.status(404).json({ error: 'Invoice not found.' });
 
+  // Students and parents can only pay their own (or their children's) invoices
+  const allowedToPay = await allowedStudentIds(req);
+  if (allowedToPay && !allowedToPay.includes(inv.student_id)) {
+    return res.status(404).json({ error: 'Invoice not found.' });
+  }
+
   const balance = Number(inv.amount) - Number(inv.amount_paid || 0);
   if (balance <= 0) return res.status(400).json({ error: 'Invoice already paid.' });
 
@@ -425,6 +439,12 @@ exports.generateInvoicePDF = async (req, res) => {
       .single();
 
     if (error || !invoice) {
+      return res.status(404).json({ error: 'Invoice not found.' });
+    }
+
+    // Students and parents can only open their own (or their children's) invoices
+    const allowedForInvoice = await allowedStudentIds(req);
+    if (allowedForInvoice && !allowedForInvoice.includes(invoice.student_id)) {
       return res.status(404).json({ error: 'Invoice not found.' });
     }
 
@@ -519,6 +539,7 @@ exports.generateReceiptPDF = async (req, res) => {
       .select(`
         *,
         fee_invoices(
+          student_id,
           term,
           academic_year,
           fee_types(name),
@@ -531,6 +552,12 @@ exports.generateReceiptPDF = async (req, res) => {
       .single();
 
     if (error || !payment) {
+      return res.status(404).json({ error: 'Payment not found.' });
+    }
+
+    // Students and parents can only open receipts for their own (or their children's) payments
+    const allowedForReceipt = await allowedStudentIds(req);
+    if (allowedForReceipt && !allowedForReceipt.includes(payment.fee_invoices?.student_id)) {
       return res.status(404).json({ error: 'Payment not found.' });
     }
 
