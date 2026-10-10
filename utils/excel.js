@@ -65,29 +65,4 @@ function splitFullName(full) {
   return { first: parts[0] || '', last: parts.slice(1).join(' ') };
 }
 
-// Builds a resolver that matches this school's teachers by full name or profile UUID.
-async function loadTeacherResolver(supabase, schoolId) {
-  const { data, error } = await supabase
-    .from('user_profiles')
-    .select('id, first_name, last_name')
-    .eq('school_id', schoolId)
-    .eq('role', 'teacher');
-  if (error) throw new Error(error.message);
-
-  const ids = new Set(data.map((t) => t.id));
-  const byName = new Map();
-  for (const t of data) {
-    const key = normName(`${t.first_name || ''} ${t.last_name || ''}`);
-    byName.set(key, byName.has(key) ? 'ambiguous' : t.id);
-  }
-  // Returns { id } or { error } with a user-facing message.
-  return (raw) => {
-    const t = String(raw).trim();
-    const id = ids.has(t) ? t : byName.get(normName(t));
-    if (id === 'ambiguous') return { error: `Teacher "${raw}" matches more than one teacher.` };
-    if (!id) return { error: `Teacher "${raw}" not found. Use the teacher's full name as shown in Staff.` };
-    return { id };
-  };
-}
-
-module.exports = { parseSheetRows, toDateString, normName, pick, splitFullName, loadTeacherResolver };
+module.exports = { parseSheetRows, toDateString, normName, pick, splitFullName };

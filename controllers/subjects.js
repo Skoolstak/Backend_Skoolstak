@@ -109,7 +109,8 @@ exports.bulkRemove = async (req, res) => {
  */
 exports.importExcel = async (req, res) => {
   try {
-    const { parseSheetRows, pick, loadTeacherResolver } = require('../utils/excel');
+    const { parseSheetRows, pick } = require('../utils/excel');
+    const { createClassResolver, createTeacherResolver } = require('../utils/importLookups');
     const { file, class_id } = req.body;
 
     if (!file) {
@@ -135,26 +136,12 @@ exports.importExcel = async (req, res) => {
       return res.status(400).json({ error: 'Excel file is empty.' });
     }
 
-    const results = { success: 0, failed: 0, errors: [] };
+    const results = { success: 0, failed: 0, errors: [], auto_created: [] };
 
-    // class_id in the sheet may be a class UUID or the class name (e.g. "JHS 1"),
-    // resolved against this school's classes only.
-    const { data: schoolClasses, error: classesError } = await supabase
-      .from('classes')
-      .select('id, name')
-      .eq('school_id', req.schoolId);
-    if (classesError) return res.status(500).json({ error: classesError.message });
-
-    const classById = new Map(schoolClasses.map((c) => [c.id, c.id]));
-    const classByName = new Map(
-      schoolClasses.map((c) => [String(c.name).trim().toLowerCase(), c.id])
-    );
-    const resolveClassId = (value) => {
-      const key = String(value).trim();
-      return classById.get(key) || classByName.get(key.toLowerCase()) || null;
-    };
-
-    const resolveTeacher = await loadTeacherResolver(supabase, req.schoolId);
+    // Class and Teacher columns accept a name (or id). Anything that doesn't exist yet is
+    // created automatically and reported in auto_created.
+    const resolveClass = await createClassResolver(req.schoolId, results.auto_created);
+    const resolveTeacher = await createTeacherResolver(req.schoolId, results.auto_created);
 
     // Accept the table's column names (Subject, Code, Class, Teacher, Status)
     // as well as the original name / class_id / is_active headers.
@@ -180,20 +167,18 @@ exports.importExcel = async (req, res) => {
           continue;
         }
 
-        const subjectClassId = resolveClassId(rawClass);
-        if (!subjectClassId) {
+        const classResult = await resolveClass(rawClass);
+        if (classResult.error) {
           results.failed++;
-          results.errors.push({
-            row: rowNum,
-            error: `Class "${rawClass}" not found. Use the exact class name (e.g. Primary 1).`,
-          });
+          results.errors.push({ row: rowNum, error: classResult.error });
           continue;
         }
+        const subjectClassId = classResult.id;
 
         let teacherId = null;
         const rawTeacher = pick(row, 'teacher', 'teacher_name', 'teacher_id');
         if (rawTeacher !== undefined) {
-          const found = resolveTeacher(rawTeacher);
+          const found = await resolveTeacher(rawTeacher);
           if (found.error) {
             results.failed++;
             results.errors.push({ row: rowNum, error: found.error });

@@ -294,7 +294,8 @@ exports.bulkRemove = async (req, res) => {
  */
 exports.importExcel = async (req, res) => {
   try {
-    const { parseSheetRows, toDateString, pick, splitFullName, normName } = require('../utils/excel');
+    const { parseSheetRows, toDateString, pick, splitFullName } = require('../utils/excel');
+    const { createClassResolver } = require('../utils/importLookups');
     const { file, class_id } = req.body;
 
     if (!file) {
@@ -320,7 +321,7 @@ exports.importExcel = async (req, res) => {
       return res.status(400).json({ error: 'Excel file is empty.' });
     }
 
-    const results = { success: 0, failed: 0, errors: [], created: [] };
+    const results = { success: 0, failed: 0, errors: [], created: [], auto_created: [] };
 
     if (class_id) {
       const { data: cls } = await supabase
@@ -332,19 +333,9 @@ exports.importExcel = async (req, res) => {
       if (!cls) return res.status(400).json({ error: 'Selected class not found.' });
     }
 
-    // Optional Class column is matched by class name (or UUID) within this school.
-    const { data: schoolClasses, error: classesError } = await supabase
-      .from('classes')
-      .select('id, name')
-      .eq('school_id', req.schoolId);
-    if (classesError) return res.status(500).json({ error: classesError.message });
-    const classById = new Set(schoolClasses.map((c) => c.id));
-    // Two classes with the same name would make placement a guess, so mark them ambiguous.
-    const classByName = new Map();
-    for (const c of schoolClasses) {
-      const key = normName(c.name);
-      classByName.set(key, classByName.has(key) ? 'ambiguous' : c.id);
-    }
+    // Optional Class column: matched by name (or id) within this school; a class that
+    // doesn't exist yet is created automatically and reported in auto_created.
+    const resolveClass = await createClassResolver(req.schoolId, results.auto_created);
 
     const STUDENT_STATUSES = ['active', 'graduated', 'withdrawn'];
 
@@ -373,18 +364,13 @@ exports.importExcel = async (req, res) => {
         let rowClassId = class_id || null;
         const rawClass = rowClassId ? undefined : pick(row, 'class', 'class_name', 'class_id');
         if (rawClass !== undefined) {
-          const key = String(rawClass).trim();
-          rowClassId = classById.has(key) ? key : classByName.get(normName(key));
-          if (rowClassId === 'ambiguous') {
+          const classResult = await resolveClass(rawClass);
+          if (classResult.error) {
             results.failed++;
-            results.errors.push({ row: rowNum, error: `More than one class is named "${rawClass}". Rename or delete the duplicate in Classes, then import again.` });
+            results.errors.push({ row: rowNum, error: classResult.error });
             continue;
           }
-          if (!rowClassId) {
-            results.failed++;
-            results.errors.push({ row: rowNum, error: `Class "${rawClass}" not found. Create it in Classes first (import Classes before Students) and use the exact class name.` });
-            continue;
-          }
+          rowClassId = classResult.id;
         }
 
         const rawStatus = pick(row, 'status');

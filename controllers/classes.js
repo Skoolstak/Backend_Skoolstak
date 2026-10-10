@@ -109,7 +109,8 @@ exports.listStudents = async (req, res) => {
  */
 exports.importExcel = async (req, res) => {
   try {
-    const { parseSheetRows, pick, loadTeacherResolver } = require('../utils/excel');
+    const { parseSheetRows, pick } = require('../utils/excel');
+    const { createTeacherResolver } = require('../utils/importLookups');
     const { file } = req.body;
 
     if (!file) {
@@ -135,8 +136,8 @@ exports.importExcel = async (req, res) => {
       return res.status(400).json({ error: 'Excel file is empty.' });
     }
 
-    const results = { success: 0, failed: 0, errors: [] };
-    const resolveTeacher = await loadTeacherResolver(supabase, req.schoolId);
+    const results = { success: 0, failed: 0, errors: [], auto_created: [] };
+    const resolveTeacher = await createTeacherResolver(req.schoolId, results.auto_created);
 
     // Process each row
     for (let i = 0; i < data.length; i++) {
@@ -153,7 +154,7 @@ exports.importExcel = async (req, res) => {
         let teacherId = null;
         const rawTeacher = pick(row, 'class_teacher', 'teacher', 'teacher_name');
         if (rawTeacher !== undefined) {
-          const found = resolveTeacher(rawTeacher);
+          const found = await resolveTeacher(rawTeacher);
           if (found.error) {
             results.failed++;
             results.errors.push({ row: rowNum, error: found.error });
