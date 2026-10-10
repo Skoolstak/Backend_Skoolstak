@@ -231,6 +231,28 @@ async function cleanupStudentPhotos(students) {
   if (error) console.warn('Failed to remove student photo(s) from storage:', error.message);
 }
 
+exports.resetLogin = async (req, res) => {
+  if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
+
+  const { data: student } = await supabase
+    .from('students')
+    .select('student_id, user_profiles!user_profile_id(auth_user_id)')
+    .eq('id', req.params.id)
+    .eq('school_id', req.schoolId)
+    .maybeSingle();
+
+  if (!student) return res.status(404).json({ error: 'Student not found.' });
+  const authUserId = student.user_profiles?.auth_user_id;
+  if (!authUserId || !student.student_id) {
+    return res.status(400).json({ error: 'This student has no login account yet.' });
+  }
+
+  const { error } = await supabase.auth.admin.updateUserById(authUserId, { password: student.student_id, email_confirm: true });
+  if (error) return res.status(500).json({ error: 'Unable to reset the student login password.' });
+
+  res.json({ message: `Login reset. The password is now the student ID: ${student.student_id}` });
+};
+
 exports.remove = async (req, res) => {
   if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'Invalid ID format.' });
 

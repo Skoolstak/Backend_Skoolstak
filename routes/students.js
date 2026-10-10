@@ -10,6 +10,7 @@ router.post('/',     requireRole('school_admin'), ctrl.create);
 router.post('/import-excel', requireRole('school_admin'), ctrl.importExcel);
 router.post('/bulk-delete',  requireRole('school_admin'), ctrl.bulkRemove);
 router.put('/:id',   requireRole('school_admin'), ctrl.update);
+router.post('/:id/reset-login', requireRole('school_admin'), ctrl.resetLogin);
 router.delete('/:id',requireRole('school_admin'), ctrl.remove);
 
 module.exports = router;

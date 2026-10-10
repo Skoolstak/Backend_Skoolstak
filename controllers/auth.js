@@ -216,29 +216,57 @@ exports.loginWithId = async (req, res) => {
 };
 
 /**
+ * Looks up the auth email behind a login. Accepts an email address, or a student / teacher ID.
+ * Students and most teachers are created with a placeholder address (@student.local / @teacher.local)
+ * that cannot receive mail; `deliverable` is false for those.
+ */
+async function resolveLoginEmail(identifier) {
+  const value = String(identifier || '').trim();
+  if (isValidEmail(value)) return { email: value, deliverable: !/\.local$/i.test(value) };
+
+  const id = value.toUpperCase();
+  const table = id.startsWith('STU-') ? ['students', 'student_id'] : id.startsWith('TEA-') ? ['staff', 'staff_id'] : null;
+  if (!table) return null;
+
+  const { data: row } = await supabase.from(table[0]).select('user_profile_id').eq(table[1], id).maybeSingle();
+  if (!row?.user_profile_id) return null;
+  const { data: profile } = await supabase.from('user_profiles').select('auth_user_id').eq('id', row.user_profile_id).maybeSingle();
+  if (!profile?.auth_user_id) return null;
+  const { data: authUser } = await supabase.auth.admin.getUserById(profile.auth_user_id);
+  const email = authUser?.user?.email;
+  return email ? { email, deliverable: !/\.local$/i.test(email) } : null;
+}
+
+/**
  * POST /api/auth/forgot-password
- * Public endpoint — initiates password reset flow
- * Body: { email }
+ * Public endpoint — initiates password reset flow for school admins, teachers and students.
+ * Body: { identifier } — an email address or a STU-/TEA- ID (older clients send { email })
+ * The answer is always the same so nobody can use it to find out which accounts exist.
  */
 exports.forgotPassword = async (req, res) => {
-  const { email } = req.body;
+  const identifier = req.body.identifier || req.body.email;
 
-  if (!email || !isValidEmail(email)) {
-    return res.status(400).json({ error: 'Valid email address is required.' });
+  if (!identifier || typeof identifier !== 'string' || identifier.length > 254) {
+    return res.status(400).json({ error: 'Enter your email address or your ID (STU-… / TEA-…).' });
   }
 
-  // Use Supabase's built-in password reset
-  const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${process.env.CLIENT_URL}/reset-password`,
-  });
+  try {
+    const target = await resolveLoginEmail(identifier);
+    if (target?.deliverable) {
+      await supabase.auth.resetPasswordForEmail(target.email, {
+        redirectTo: `${process.env.CLIENT_URL}/reset-password`,
+      });
+    }
+  } catch (err) {
+    console.error('Forgot password error:', err.message);
+  }
 
-  // Always return success to prevent email enumeration
-  res.json({ message: 'If that email exists, a password reset link has been sent.' });
+  res.json({ message: 'If that account has an email address on file, a password reset link has been sent.' });
 };
 
 /**
  * POST /api/auth/reset-password
- * Public endpoint — completes password reset with token
+ * Public endpoint — completes password reset with the token from the reset email
  * Body: { token, password }
  */
 exports.resetPassword = async (req, res) => {
@@ -256,13 +284,15 @@ exports.resetPassword = async (req, res) => {
     return res.status(400).json({ error: 'Password is too long.' });
   }
 
-  // Update password using the access token from the reset email
-  const { data, error } = await supabase.auth.updateUser({
-    password,
-  });
-
-  if (error) {
+  // The service-role client has no signed-in user, so identify the user from the emailed token
+  const { data: tokenUser, error: tokenError } = await supabase.auth.getUser(token);
+  if (tokenError || !tokenUser?.user) {
     return res.status(400).json({ error: 'Invalid or expired reset token.' });
+  }
+
+  const { error } = await supabase.auth.admin.updateUserById(tokenUser.user.id, { password });
+  if (error) {
+    return res.status(400).json({ error: 'Could not update the password. Please request a new link.' });
   }
 
   res.json({ message: 'Password updated successfully. You can now sign in.' });
