@@ -227,12 +227,13 @@ exports.bulkRemove = async (req, res) => {
  * POST /api/staff/import-excel
  * Bulk import staff members from Excel file
  * Expects base64 encoded Excel file in req.body.file
- * Required columns: first_name, last_name, email
- * Optional columns: phone, role, department, designation
+ * Columns (match the Staff table): Name (full name), Role, Designation, Department, Phone, Email
+ * Required: Name. Optional: Role (Teacher/School Admin, default Teacher), Designation, Department, Phone,
+ * Email (optional for teachers, who sign in with their generated TEA- ID; required for School Admins).
  */
 exports.importExcel = async (req, res) => {
   try {
-    const { parseSheetRows } = require('../utils/excel');
+    const { parseSheetRows, pick, splitFullName } = require('../utils/excel');
     const { file } = req.body;
 
     if (!file) {
@@ -258,28 +259,55 @@ exports.importExcel = async (req, res) => {
       return res.status(400).json({ error: 'Excel file is empty.' });
     }
 
-    const results = { success: 0, failed: 0, errors: [] };
+    const results = { success: 0, failed: 0, errors: [], created: [] };
 
     // Process each row
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
       const rowNum = i + 2; // +1 for 0-index, +1 for header row
       try {
-        if (!row.first_name || !row.last_name || !row.email) {
+        let firstName = pick(row, 'first_name');
+        let lastName = pick(row, 'last_name');
+        if (!firstName || !lastName) {
+          const full = pick(row, 'name', 'staff_name', 'full_name');
+          if (full) {
+            const parts = splitFullName(full);
+            firstName = firstName || parts.first;
+            lastName = lastName || parts.last;
+          }
+        }
+        const rawEmail = pick(row, 'email', 'email_address');
+        if (!firstName || !lastName) {
           results.failed++;
-          results.errors.push({ row: rowNum, error: 'Missing first_name, last_name, or email' });
+          results.errors.push({ row: rowNum, error: 'Name must include a first and last name (e.g. "Esi Ade")' });
           continue;
         }
 
-        const email = String(row.email).trim().toLowerCase();
-        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        const rawRole = pick(row, 'role');
+        const roleValue = rawRole === undefined ? 'teacher' : String(rawRole).trim().toLowerCase().replace(/\s+/g, '_');
+        if (!ALLOWED_ROLES.includes(roleValue)) {
+          results.failed++;
+          results.errors.push({ row: rowNum, error: `Role "${rawRole}" must be Teacher or School Admin.` });
+          continue;
+        }
+        const role = roleValue;
+
+        // Email is optional for teachers (they sign in with their generated TEA- code);
+        // school admins sign in by email, so it is required for them.
+        if (rawEmail !== undefined && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(rawEmail).trim())) {
           results.failed++;
           results.errors.push({ row: rowNum, error: 'Invalid email address' });
           continue;
         }
-
-        const roleValue = row.role ? String(row.role).trim().toLowerCase() : '';
-        const role = ALLOWED_ROLES.includes(roleValue) ? roleValue : 'teacher';
+        const email = resolveAuthEmail(rawEmail === undefined ? '' : String(rawEmail), role);
+        if (!email) {
+          results.failed++;
+          results.errors.push({ row: rowNum, error: 'Email is required for School Admins' });
+          continue;
+        }
+        const phone = pick(row, 'phone', 'phone_number');
+        const department = pick(row, 'department');
+        const designation = pick(row, 'designation');
 
         // 1. Create the account with a temporary password until the generated staff ID is available.
         const { data: authData, error: authError } = await supabase.auth.admin.createUser({
@@ -302,9 +330,9 @@ exports.importExcel = async (req, res) => {
             auth_user_id: authUserId,
             school_id: req.schoolId,
             role,
-            first_name: String(row.first_name).trim(),
-            last_name: String(row.last_name).trim(),
-            phone: row.phone ? String(row.phone).trim() : null,
+            first_name: String(firstName).trim(),
+            last_name: String(lastName).trim(),
+            phone: phone !== undefined ? String(phone).trim() : null,
           })
           .select()
           .single();
@@ -322,8 +350,8 @@ exports.importExcel = async (req, res) => {
           .insert({
             school_id: req.schoolId,
             user_profile_id: profileRow.id,
-            department: row.department ? String(row.department).trim() : null,
-            designation: row.designation ? String(row.designation).trim() : null,
+            department: department !== undefined ? String(department).trim() : null,
+            designation: designation !== undefined ? String(designation).trim() : null,
           })
           .select()
           .single();
@@ -353,6 +381,11 @@ exports.importExcel = async (req, res) => {
         }
 
         results.success++;
+        results.created.push({
+          row: rowNum,
+          name: `${String(firstName).trim()} ${String(lastName).trim()}`,
+          login_id: staffRow.staff_id,
+        });
       } catch (err) {
         results.failed++;
         results.errors.push({ row: rowNum, error: err.message });

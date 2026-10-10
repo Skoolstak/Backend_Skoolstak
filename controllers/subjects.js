@@ -102,13 +102,14 @@ exports.bulkRemove = async (req, res) => {
  * POST /api/subjects/import-excel
  * Bulk import subjects from Excel file
  * Expects base64 encoded Excel file in req.body.file
- * Required columns: name, class_id
- * Optional columns: code, is_active
+ * Columns (match the Subjects table): Subject, Code, Class, Teacher, Status
+ * Required: Subject, Class (class name). Optional: Code, Teacher (full name), Status (Active/Inactive)
+ * Legacy headers name / class_id / is_active are still accepted.
  * If class_id provided in request body, it will be used for all subjects
  */
 exports.importExcel = async (req, res) => {
   try {
-    const { parseSheetRows } = require('../utils/excel');
+    const { parseSheetRows, pick, loadTeacherResolver } = require('../utils/excel');
     const { file, class_id } = req.body;
 
     if (!file) {
@@ -153,23 +154,29 @@ exports.importExcel = async (req, res) => {
       return classById.get(key) || classByName.get(key.toLowerCase()) || null;
     };
 
+    const resolveTeacher = await loadTeacherResolver(supabase, req.schoolId);
+
+    // Accept the table's column names (Subject, Code, Class, Teacher, Status)
+    // as well as the original name / class_id / is_active headers.
+
     // Process each row
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
       const rowNum = i + 2; // +1 for 0-index, +1 for header row
       try {
-        if (!row.name) {
+        const subjectName = pick(row, 'subject', 'name', 'subject_name');
+        if (!subjectName) {
           results.failed++;
-          results.errors.push({ row: rowNum, error: 'Missing name' });
+          results.errors.push({ row: rowNum, error: 'Missing subject name' });
           continue;
         }
 
         // Use class_id from request body if provided, otherwise from row
-        const rawClass = class_id || row.class_id;
+        const rawClass = class_id || pick(row, 'class', 'class_id', 'class_name');
 
         if (rawClass === undefined || rawClass === null || String(rawClass).trim() === '') {
           results.failed++;
-          results.errors.push({ row: rowNum, error: 'Missing class_id' });
+          results.errors.push({ row: rowNum, error: 'Missing class' });
           continue;
         }
 
@@ -178,19 +185,32 @@ exports.importExcel = async (req, res) => {
           results.failed++;
           results.errors.push({
             row: rowNum,
-            error: `Class "${rawClass}" not found. Use the class UUID or the exact class name.`,
+            error: `Class "${rawClass}" not found. Use the exact class name (e.g. Primary 1).`,
           });
           continue;
         }
 
+        let teacherId = null;
+        const rawTeacher = pick(row, 'teacher', 'teacher_name', 'teacher_id');
+        if (rawTeacher !== undefined) {
+          const found = resolveTeacher(rawTeacher);
+          if (found.error) {
+            results.failed++;
+            results.errors.push({ row: rowNum, error: found.error });
+            continue;
+          }
+          teacherId = found.id;
+        }
+
+        const rawStatus = pick(row, 'status', 'is_active');
         const subjectData = {
           school_id: req.schoolId,
-          name: String(row.name).trim(),
+          name: String(subjectName).trim(),
           code: row.code ? String(row.code).trim() : null,
           class_id: subjectClassId,
-          teacher_id: null,
-          is_active: row.is_active !== undefined
-            ? !['false', '0', 'no', ''].includes(String(row.is_active).trim().toLowerCase())
+          teacher_id: teacherId,
+          is_active: rawStatus !== undefined
+            ? !['false', '0', 'no', 'inactive'].includes(String(rawStatus).trim().toLowerCase())
             : true,
         };
 

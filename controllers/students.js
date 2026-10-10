@@ -289,11 +289,12 @@ exports.bulkRemove = async (req, res) => {
  * POST /api/students/import-excel
  * Bulk import students from Excel file
  * Expects base64 encoded Excel file in req.body.file
- * Install: npm install xlsx
+ * Columns (match the Students table): Student (full name), Class, Date of Birth, Status
+ * Required: Student. Optional: Class (class name), Date of Birth, Status (Active/Graduated/Withdrawn).
  */
 exports.importExcel = async (req, res) => {
   try {
-    const { parseSheetRows, toDateString } = require('../utils/excel');
+    const { parseSheetRows, toDateString, pick, splitFullName, normName } = require('../utils/excel');
     const { file, class_id } = req.body;
 
     if (!file) {
@@ -319,7 +320,7 @@ exports.importExcel = async (req, res) => {
       return res.status(400).json({ error: 'Excel file is empty.' });
     }
 
-    const results = { success: 0, failed: 0, errors: [] };
+    const results = { success: 0, failed: 0, errors: [], created: [] };
 
     if (class_id) {
       const { data: cls } = await supabase
@@ -331,24 +332,66 @@ exports.importExcel = async (req, res) => {
       if (!cls) return res.status(400).json({ error: 'Selected class not found.' });
     }
 
-    // Expected columns: first_name, last_name, dob (optional)
+    // Optional Class column is matched by class name (or UUID) within this school.
+    const { data: schoolClasses, error: classesError } = await supabase
+      .from('classes')
+      .select('id, name')
+      .eq('school_id', req.schoolId);
+    if (classesError) return res.status(500).json({ error: classesError.message });
+    const classById = new Set(schoolClasses.map((c) => c.id));
+    const classByName = new Map(schoolClasses.map((c) => [normName(c.name), c.id]));
+
+    const STUDENT_STATUSES = ['active', 'graduated', 'withdrawn'];
+
+    // Columns match the Students table: Student (full name), Class, Date of Birth, Status.
+    // first_name / last_name / dob headers are still accepted.
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
       const rowNum = i + 2; // +1 for 0-index, +1 for header row
       try {
-        if (!row.first_name || !row.last_name) {
+        let firstName = pick(row, 'first_name');
+        let lastName = pick(row, 'last_name');
+        if (!firstName || !lastName) {
+          const full = pick(row, 'student', 'student_name', 'name', 'full_name');
+          if (full) {
+            const parts = splitFullName(full);
+            firstName = firstName || parts.first;
+            lastName = lastName || parts.last;
+          }
+        }
+        if (!firstName || !lastName) {
           results.failed++;
-          results.errors.push({ row: rowNum, error: 'Missing first_name or last_name' });
+          results.errors.push({ row: rowNum, error: 'Student needs a first and last name (e.g. "Ama Mensah")' });
+          continue;
+        }
+
+        let rowClassId = class_id || null;
+        const rawClass = rowClassId ? undefined : pick(row, 'class', 'class_name', 'class_id');
+        if (rawClass !== undefined) {
+          const key = String(rawClass).trim();
+          rowClassId = classById.has(key) ? key : classByName.get(normName(key));
+          if (!rowClassId) {
+            results.failed++;
+            results.errors.push({ row: rowNum, error: `Class "${rawClass}" not found. Use the exact class name (e.g. Primary 1).` });
+            continue;
+          }
+        }
+
+        const rawStatus = pick(row, 'status');
+        const status = rawStatus === undefined ? 'active' : String(rawStatus).trim().toLowerCase();
+        if (!STUDENT_STATUSES.includes(status)) {
+          results.failed++;
+          results.errors.push({ row: rowNum, error: `Status "${rawStatus}" must be Active, Graduated or Withdrawn.` });
           continue;
         }
 
         const studentData = {
           school_id: req.schoolId,
-          first_name: String(row.first_name).trim(),
-          last_name: String(row.last_name).trim(),
-          dob: toDateString(row.dob),
-          class_id: class_id || null,
-          status: 'active',
+          first_name: String(firstName).trim(),
+          last_name: String(lastName).trim(),
+          dob: toDateString(pick(row, 'date_of_birth', 'dob', 'birth_date', 'birthdate')),
+          class_id: rowClassId,
+          status,
         };
 
         // 1. Create student record (retry once on student_id unique collision)
@@ -369,21 +412,23 @@ exports.importExcel = async (req, res) => {
           continue;
         }
 
-        // 2. Create auth account for student
+        // 2. Create the login. Students sign in with their STU- ID, so the auth
+        // email is an internal placeholder. If any step fails, undo the student
+        // so nobody is left imported without a working login.
         const studentId = student.student_id;
         const tempEmail = `${studentId.toLowerCase()}@student.local`;
-        const initialPassword = studentId;
+        const rollbackStudent = () => supabase.from('students').delete().eq('id', student.id);
 
         const { data: authData, error: authError } = await supabase.auth.admin.createUser({
           email: tempEmail,
-          password: initialPassword,
+          password: studentId,
           email_confirm: true,
         });
 
         if (authError) {
-          // Student created but auth failed - log and continue
-          console.warn(`Auth creation failed for ${studentId}:`, authError.message);
-          results.success++;
+          await rollbackStudent();
+          results.failed++;
+          results.errors.push({ row: rowNum, error: `Could not create student login: ${authError.message}` });
           continue;
         }
 
@@ -402,18 +447,33 @@ exports.importExcel = async (req, res) => {
 
         if (profileError) {
           await supabase.auth.admin.deleteUser(authData.user.id);
-          console.warn(`Profile creation failed for ${studentId}:`, profileError.message);
-          results.success++;
+          await rollbackStudent();
+          results.failed++;
+          results.errors.push({ row: rowNum, error: `Could not create student profile: ${profileError.message}` });
           continue;
         }
 
         // 4. Link student to user_profile
-        await supabase
+        const { error: linkError } = await supabase
           .from('students')
           .update({ user_profile_id: profileData.id })
           .eq('id', student.id);
 
+        if (linkError) {
+          await supabase.from('user_profiles').delete().eq('id', profileData.id);
+          await supabase.auth.admin.deleteUser(authData.user.id);
+          await rollbackStudent();
+          results.failed++;
+          results.errors.push({ row: rowNum, error: `Could not link student login: ${linkError.message}` });
+          continue;
+        }
+
         results.success++;
+        results.created.push({
+          row: rowNum,
+          name: `${studentData.first_name} ${studentData.last_name}`,
+          login_id: studentId,
+        });
       } catch (err) {
         results.failed++;
         results.errors.push({ row: rowNum, error: err.message });

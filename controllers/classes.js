@@ -103,12 +103,13 @@ exports.listStudents = async (req, res) => {
  * POST /api/classes/import-excel
  * Bulk import classes from Excel file
  * Expects base64 encoded Excel file in req.body.file
- * Required columns: name
- * Optional columns: level, capacity
+ * Columns (match the Classes table): Class Name, Level, Class Teacher, Capacity
+ * Required: Class Name. Optional: Level, Class Teacher (full name), Capacity.
+ * "Students" is a computed count and is ignored if present.
  */
 exports.importExcel = async (req, res) => {
   try {
-    const { parseSheetRows } = require('../utils/excel');
+    const { parseSheetRows, pick, loadTeacherResolver } = require('../utils/excel');
     const { file } = req.body;
 
     if (!file) {
@@ -135,24 +136,40 @@ exports.importExcel = async (req, res) => {
     }
 
     const results = { success: 0, failed: 0, errors: [] };
+    const resolveTeacher = await loadTeacherResolver(supabase, req.schoolId);
 
     // Process each row
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
       const rowNum = i + 2; // +1 for 0-index, +1 for header row
       try {
-        if (!row.name) {
+        const className = pick(row, 'class_name', 'name', 'class');
+        if (!className) {
           results.failed++;
-          results.errors.push({ row: rowNum, error: 'Missing name' });
+          results.errors.push({ row: rowNum, error: 'Missing class name' });
           continue;
         }
 
+        let teacherId = null;
+        const rawTeacher = pick(row, 'class_teacher', 'teacher', 'teacher_name');
+        if (rawTeacher !== undefined) {
+          const found = resolveTeacher(rawTeacher);
+          if (found.error) {
+            results.failed++;
+            results.errors.push({ row: rowNum, error: found.error });
+            continue;
+          }
+          teacherId = found.id;
+        }
+
+        const level = pick(row, 'level');
+        const capacity = parseInt(pick(row, 'capacity'), 10);
         const classData = {
           school_id: req.schoolId,
-          name: String(row.name).trim(),
-          level: row.level ? String(row.level).trim() : null,
-          capacity: Number.isFinite(parseInt(row.capacity, 10)) ? parseInt(row.capacity, 10) : null,
-          teacher_id: null,
+          name: String(className).trim(),
+          level: level !== undefined ? String(level).trim() : null,
+          capacity: Number.isFinite(capacity) ? capacity : null,
+          teacher_id: teacherId,
         };
 
         const { error } = await supabase
