@@ -26,6 +26,7 @@ const formatDate = (d) => {
   return `${da}/${mo}/${y}`;
 };
 const money = (n) => Number(n).toLocaleString('en-GB', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const ghs = (n) => `GHS ${money(n)}`; // Ghana cedis; PDF fonts have no cedi symbol, so the code is printed
 const r2 = (n) => Math.round(n * 100) / 100;
 
 function parseAmount(raw) {
@@ -319,31 +320,31 @@ exports.generateSalaryNoticePDF = async (req, res) => {
     y += 18;
     rule();
 
-    row(`Basic salary - ${period}`, money(pay.basic), { bold: true, gap: revision ? 14 : 20 });
+    row(`Basic salary - ${period}`, ghs(pay.basic), { bold: true, gap: revision ? 14 : 20 });
     if (revision) {
       doc.fontSize(8).fillColor('#555555');
-      doc.text(`Salary revised this month: GHS ${money(revision.from)} to GHS ${money(revision.to)}${revision.reason ? ` (${revision.reason})` : ''}`, left + 12, y, { width: right - left - 12 });
+      doc.text(`Salary revised this month: ${ghs(revision.from)} to ${ghs(revision.to)}${revision.reason ? ` (${revision.reason})` : ''}`, left + 12, y, { width: right - left - 12 });
       doc.fillColor('#000000');
       y += 18;
     }
 
     if (pay.earnings.length > 0) {
       heading('Allowances and bonuses');
-      for (const a of pay.earnings) row(`${a.label} (${KIND_LABELS[a.kind]})`, money(a.amount), { indent: 12 });
-      row('Total allowances and bonuses', money(pay.totalEarnings), { bold: true, gap: 20 });
+      for (const a of pay.earnings) row(`${a.label} (${KIND_LABELS[a.kind]})`, ghs(a.amount), { indent: 12 });
+      row('Total allowances and bonuses', ghs(pay.totalEarnings), { bold: true, gap: 20 });
     }
 
     rule();
-    row('Gross pay', money(pay.gross), { bold: true, gap: 20 });
+    row('Gross pay', ghs(pay.gross), { bold: true, gap: 20 });
 
     if (pay.deductions.length > 0) {
       heading('Deductions');
-      for (const d of pay.deductions) row(d.label, `-${money(d.amount)}`, { indent: 12 });
-      row('Total deductions', `-${money(pay.totalDeductions)}`, { bold: true, gap: 20 });
+      for (const d of pay.deductions) row(d.label, `-${ghs(d.amount)}`, { indent: 12 });
+      row('Total deductions', `-${ghs(pay.totalDeductions)}`, { bold: true, gap: 20 });
     }
 
     rule();
-    row('Net Pay', `GHS ${money(pay.net)}`, { bold: true, size: 13, gap: 36 });
+    row('Net Pay', ghs(pay.net), { bold: true, size: 13, gap: 36 });
 
     // Signatures
     ensureRoom(70);
