@@ -10,6 +10,8 @@ const viewer = requireRole('school_admin','teacher','student','parent');
 router.get('/books',           viewer, ctrl.listBooks);
 router.post('/books',          admin,  ctrl.createBook);
 router.put('/books/:id',       admin,  ctrl.updateBook);
+router.post('/books/bulk-delete', admin, ctrl.bulkRemoveBooks);
+router.delete('/books/:id',    admin,  ctrl.removeBook);
 
 router.get('/loans',           viewer, ctrl.listLoans);
 router.post('/loans',          admin,  ctrl.issueBook);
