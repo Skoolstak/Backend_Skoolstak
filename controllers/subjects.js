@@ -1,7 +1,12 @@
 const supabase = require('../supabaseClient');
+const cache = require('../middleware/cache');
 const { pickFields, isValidUUID } = require('../middleware/sanitize');
 
 const SUBJECT_FIELDS = ['name', 'code', 'class_id', 'teacher_id', 'is_active'];
+
+// The subjects list is cached for 2 minutes (see routes/subjects.js); clear this school's
+// cached list after any change so adds, edits, deletes and imports show up immediately.
+const bustListCache = (schoolId) => cache.invalidate(`${schoolId}:/:`);
 
 exports.list = async (req, res) => {
   const { class_id } = req.query;
@@ -40,6 +45,7 @@ exports.create = async (req, res) => {
     .single();
 
   if (error) return res.status(400).json({ error: error.message });
+  bustListCache(req.schoolId);
   res.status(201).json({ subject: data });
 };
 
@@ -58,6 +64,7 @@ exports.update = async (req, res) => {
     .single();
 
   if (error) return res.status(400).json({ error: error.message });
+  bustListCache(req.schoolId);
   res.json({ subject: data });
 };
 
@@ -71,6 +78,7 @@ exports.remove = async (req, res) => {
     .eq('school_id', req.schoolId);
 
   if (error) return res.status(400).json({ error: error.message });
+  bustListCache(req.schoolId);
   res.json({ success: true });
 };
 
@@ -95,6 +103,7 @@ exports.bulkRemove = async (req, res) => {
     .in('id', ids)
     .eq('school_id', req.schoolId);
   if (error) return res.status(400).json({ error: error.message });
+  bustListCache(req.schoolId);
   res.json({ success: true, deleted: count ?? ids.length });
 };
 
@@ -215,6 +224,7 @@ exports.importExcel = async (req, res) => {
       }
     }
 
+    bustListCache(req.schoolId);
     res.json({
       message: `Import completed. ${results.success} subjects added, ${results.failed} failed.`,
       ...results,
