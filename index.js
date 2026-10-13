@@ -33,11 +33,17 @@ const app  = express();
 const PORT = process.env.PORT || 5000;
 const isDev = process.env.NODE_ENV !== 'production';
 
+// Behind Render/other proxies every request otherwise appears to come from the proxy IP,
+// which makes all users share one rate-limit bucket.
+app.set('trust proxy', 1);
+
 // ── Rate limiters ─────────────────────────────────────────────────────────────
-// Auth endpoints: 20 attempts per 15 minutes per IP (brute-force protection)
+// Auth endpoints: only FAILED attempts count (brute-force protection) so a school
+// full of users on one network can all sign in.
 const authLimiter = rateLimit({
   windowMs:         15 * 60 * 1000,
-  max:              20,
+  max:              30,
+  skipSuccessfulRequests: true,
   standardHeaders:  true,
   legacyHeaders:    false,
   message:          { error: 'Too many login attempts. Please try again in 15 minutes.' },
@@ -90,6 +96,7 @@ app.use(helmet({
     },
   },
   crossOriginEmbedderPolicy: false, // allow PDF iframe previews
+  crossOriginResourcePolicy: { policy: 'cross-origin' }, // API is called from the separate client origin; CORS still gates access
 }));
 
 // Supports a comma-separated list so the API can be reached from multiple

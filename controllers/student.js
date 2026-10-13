@@ -8,7 +8,7 @@ async function getStudentId(req) {
 
 exports.timetable = async (req, res) => {
   const student = await getStudentId(req);
-  if (!student) return res.json({ slots: [] });
+  if (!student || !student.class_id) return res.json({ slots: [] });
 
   const { data, error } = await supabase.from('timetable_slots')
     .select('*, user_profiles!teacher_id(first_name,last_name)')

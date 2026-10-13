@@ -1,5 +1,6 @@
 'use strict';
 const supabase = require('../supabaseClient'); // service-role client
+const { signInWithPassword } = supabase;
 const { isValidEmail, isSafeText, cleanString } = require('../middleware/sanitize');
 const crypto = require('crypto');
 
@@ -145,7 +146,7 @@ exports.loginWithId = async (req, res) => {
     }
 
     // Sign in with email and password
-    const { data: session, error: signInError } = await supabase.auth.signInWithPassword({
+    const { data: session, error: signInError } = await signInWithPassword({
       email: authUser.user.email,
       password,
     });
@@ -194,7 +195,7 @@ exports.loginWithId = async (req, res) => {
     }
 
     // Sign in with email and password
-    const { data: session, error: signInError } = await supabase.auth.signInWithPassword({
+    const { data: session, error: signInError } = await signInWithPassword({
       email: authUser.user.email,
       password,
     });
@@ -340,7 +341,7 @@ exports.changePassword = async (req, res) => {
     }
 
     // Verify current password by attempting to sign in
-    const { error: signInError } = await supabase.auth.signInWithPassword({
+    const { error: signInError } = await signInWithPassword({
       email: user.email,
       password: currentPassword,
     });
